@@ -127,25 +127,12 @@ fi
 if [[ -n $LS_MPS ]] && [[ $LS_MPS -gt 0 ]]; then
    export CUDA_VISIBLE_DEVICES=$((OMPI_COMM_WORLD_LOCAL_RANK/LS_MPS))
 fi
-if [[ -n $LS_MPS ]]; then
-   if [[ $LS_MPS == louistmp2 ]] || [[ $LS_MPS == pci2 ]]; then
-      export CUDA_VISIBLE_DEVICES=$((OMPI_COMM_WORLD_LOCAL_RANK/2*2)) ## 4 GPUs
+if [[ -n $LS_PCI ]] && [[ $LS_MPS -gt 0 ]]; then
+   if [[ -n $LS_MPS ]]; then
+      export CUDA_VISIBLE_DEVICES=$((OMPI_COMM_WORLD_LOCAL_RANK/LS_MPS*LS_PCI))
+   else
+      export CUDA_VISIBLE_DEVICES=$((OMPI_COMM_WORLD_LOCAL_RANK*LS_PCI))
    fi
-fi
-if [[ -n $LS_MPS ]] && [[ $LS_MPS == pci3 ]]; then
-   export CUDA_VISIBLE_DEVICES=$((OMPI_COMM_WORLD_LOCAL_RANK/3*2)) ## 4 GPUs
-fi
-if [[ -n $LS_MPS ]] && [[ $LS_MPS == pci4 ]]; then
-   export CUDA_VISIBLE_DEVICES=$((OMPI_COMM_WORLD_LOCAL_RANK/4*2)) ## 4 GPUs
-fi
-if [[ -n $LS_MPS ]] && [[ $LS_MPS == louistmp4 ]]; then
-   export CUDA_VISIBLE_DEVICES=$((OMPI_COMM_WORLD_LOCAL_RANK/4*4)) ## 2 GPUs
-fi
-if [[ -n $LS_MPS ]] && [[ $LS_MPS == louistmp5 ]]; then
-   export CUDA_VISIBLE_DEVICES=$((OMPI_COMM_WORLD_LOCAL_RANK*2/5*2)) ## 2 GPUs
-fi
-if [[ -n $LS_PCI ]]; then
-   export CUDA_VISIBLE_DEVICES=$((OMPI_COMM_WORLD_LOCAL_RANK*LS_PCI))
 fi
 if [[ -n $CVD ]]; then
    export CUDA_VISIBLE_DEVICES=${CVD:$OMPI_COMM_WORLD_LOCAL_RANK:1}

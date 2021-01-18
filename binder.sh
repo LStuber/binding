@@ -11,6 +11,14 @@ if [[ $LS_NGPUS -ne 8 ]]; then
    echo "WARNING: Number of GPUs is different than 8. count=$LS_NGPUS"
 fi
 
+# Srun
+if [[ -z $OMPI_COMM_WORLD_LOCAL_RANK ]]; then
+   export OMPI_COMM_WORLD_RANK=$SLURM_PROCID
+   export OMPI_COMM_WORLD_LOCAL_RANK=$SLURM_LOCALID
+   export OMPI_COMM_WORLD_SIZE=$SLURM_NTASKS
+   export OMPI_COMM_WORLD_LOCAL_SIZE=$((OMPI_COMM_WORLD_SIZE/SLURM_NNODES))
+fi
+
 if [[ -z $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
    if [[ -n $LSUB_NTASKS_PER_NODE ]]; then
       OMPI_COMM_WORLD_LOCAL_SIZE=$LSUB_NTASKS_PER_NODE

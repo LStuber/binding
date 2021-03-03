@@ -1,15 +1,9 @@
-   uint32_t adler32(const unsigned char *data)
-   {
-      const uint32_t MOD_ADLER = 65521;
-      uint32_t a = 1, b = 0;
-      size_t index;
-      for (index = 0; data[index] != 0; ++index)
-      {
-         a = (a + data[index]*2) % MOD_ADLER;
-         b = (b + a) % MOD_ADLER;
-      }
-      return (b << 16) | a;
-   }
+#include <nvToolsExt.h>
+#include <string.h>
+
+// mpicc -c nvtx.c -O2
+uint32_t adler32(const unsigned char *data);
+
 void mynvtxstart_(const char *name) {
    int hash = 0;
    int color_id = adler32((const unsigned char*)name);
@@ -33,3 +27,16 @@ void mynvtxstart_(const char *name) {
    eventAttrib.message.ascii = name;
    nvtxRangePushEx(&eventAttrib);
 }
+
+uint32_t adler32(const unsigned char *data)
+   {
+      const uint32_t MOD_ADLER = 65521;
+      uint32_t a = 1, b = 0;
+      size_t index;
+      for (index = 0; data[index] != 0; ++index)
+      {
+         a = (a + data[index]*2) % MOD_ADLER;
+         b = (b + a) % MOD_ADLER;
+      }
+      return (b << 16) | a;
+   }

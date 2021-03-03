@@ -1,7 +1,7 @@
+// mpicc -c nvtx.c -O2
 #include <nvToolsExt.h>
 #include <string.h>
 
-// mpicc -c nvtx.c -O2
 uint32_t adler32(const unsigned char *data);
 
 void mynvtxstart_(const char *name) {

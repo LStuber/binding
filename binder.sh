@@ -59,13 +59,13 @@ fi
       nmpi_per_gpu=$((nmpi_per_gpu*LS_MPS))
    fi
    if [[ $((nmpi_per_gpu*LS_NGPUS)) -lt $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
-      echo "Error: too many MPI ranks per GPU. $nmpi_per_gpu requested, $(((OMPI_COMM_WORLD_LOCAL_SIZE+LS_NGPUS-1)/LS_NGPUS)) found. Try setting MPI_PER_GPU=$(((OMPI_COMM_WORLD_LOCAL_SIZE+LS_NGPUS-1)/LS_NGPUS))" 
+      echo "Error: too many MPI ranks per GPU. $nmpi_per_gpu requested, $(((OMPI_COMM_WORLD_LOCAL_SIZE+LS_NGPUS-1)/LS_NGPUS)) found. Try setting MPI_PER_GPU=$(((OMPI_COMM_WORLD_LOCAL_SIZE+LS_NGPUS-1)/LS_NGPUS))"
       exit -1
    fi
    export CUDA_VISIBLE_DEVICES=$((OMPI_COMM_WORLD_LOCAL_RANK/nmpi_per_gpu))
    if [[ -n $LS_PCI ]]; then
       if [[ $((nmpi_per_gpu*LS_NGPUS/LS_PCI)) -lt $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
-         echo "Error: too many MPI ranks per GPU. $nmpi_per_gpu requested, $((OMPI_COMM_WORLD_LOCAL_SIZE/LS_NGPUS)) found. Try tweaking MPI_PER_GPU and LS_PCI." 
+         echo "Error: too many MPI ranks per GPU. $nmpi_per_gpu requested, $((OMPI_COMM_WORLD_LOCAL_SIZE/LS_NGPUS)) found. Try tweaking MPI_PER_GPU and LS_PCI."
          exit -1
       fi
       if [[ $LS_PCI == 2ALLNUMA ]]; then
@@ -78,8 +78,8 @@ fi
    fi
 
 isocket=
-if lscpu | grep -q "AMD EPYC" && [ $nnumas == 8 ] ; then
-   #Specific to DGX A100
+if lscpu | grep -q "AMD EPYC"; then
+   #Specific for DGX A100
    GPUS=(0 1 2 3 4 5 6 7)
    CPUS=(3 2 1 0 7 6 5 4)
    NICS=(mlx5_1 mlx5_0 mlx5_3 mlx5_2 mlx5_7 mlx5_6 mlx5_9 mlx5_8)
@@ -249,4 +249,3 @@ if [[ $ENABLE_MPS == true ]] || [[ $ENABLE_MPS == 1 ]]; then
       echo quit | nvidia-cuda-mps-control && echo "Stopped MPS"
    fi
 fi
-

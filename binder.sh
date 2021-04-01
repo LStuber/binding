@@ -78,8 +78,22 @@ fi
    fi
 
 isocket=
-if lscpu | grep -q "AMD EPYC"; then
-   #Specific for DGX A100
+if ! [[ "$DISABLE_AMD_OPTI" == true ]] && lscpu | grep -q "AMD EPYC 7402" && [[ LS_NGPUS == 4 ]]; then
+   #JUWELS
+   GPUS=(0 1 2 3)
+   CPUS=(3 4 1 2 7 8 5 6)
+   NICS=(mlx5_0 mlx5_1 mlx5_2 mlx5_3)
+
+   if [[ $DISABLE_HALF_NUMAS == true ]]; then
+   CPUS=(3 3 1 1 7 7 5 5)
+   fi
+   if [[ -n $NICS_PER_NODE ]]; then
+      for igpu in $(seq 0 $((LS_NGPUS-1))); do
+         NICS[$igpu]=${NICS[$((igpu/(8/NICS_PER_NODE)*(8/NICS_PER_NODE)))]}
+      done
+   fi
+elif lscpu | grep -q "AMD EPYC 7742" && ! [[ "$DISABLE_AMD_OPTI" == true ]]; then
+   #DGX A100
    GPUS=(0 1 2 3 4 5 6 7)
    CPUS=(3 2 1 0 7 6 5 4)
    NICS=(mlx5_1 mlx5_0 mlx5_3 mlx5_2 mlx5_7 mlx5_6 mlx5_9 mlx5_8)
@@ -132,8 +146,6 @@ export UCX_NET_DEVICES=$OMPI_MCA_btl_openib_if_include:1
 
 ## CPU binding
 
-isocket=${CPUS[${CUDA_VISIBLE_DEVICES::1}]}
-
 # calculate cores/sockets per mpi
 if [[ -z $nmpi_per_socket ]]; then
    nmpi_per_socket=$((LS_NGPUS*nmpi_per_gpu / nsockets))
@@ -144,13 +156,14 @@ if [[ -n $LS_PCI ]]; then
 fi
 if [[ $nmpi_per_socket == 0 ]]; then
    echo "Error: $nmpi_per_socket MPI ranks per socket"
+   export nmpi_per_socket=1
    exit -1
 fi
 ##if [[ $DISABLE_HALF_NUMAS == true ]]; then
 ##   nmpi_per_socket=$((nmpi_per_socket*2))
 ##fi
 if [[ -z $isocket ]]; then
-   isocket=$((OMPI_COMM_WORLD_LOCAL_RANK / nmpi_per_socket))
+   isocket=${CPUS[$((OMPI_COMM_WORLD_LOCAL_RANK / nmpi_per_socket))]}
 fi
 
 if [[ -n $NCORES_PER_MPI ]];then
@@ -219,7 +232,9 @@ fi
 if [[ -n $CUDA_VISIBLE_DEVICES_actual ]]; then
    export CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES_actual
 fi
-
+if [[ $GPU_BINDING == unset ]]; then
+   unset CUDA_VISIBLE_DEVICES
+fi
 
 if [[ $GOMP_PIN == 1 ]]; then
    export GOMP_CPU_AFFINITY=$cores

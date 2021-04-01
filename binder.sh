@@ -1,7 +1,11 @@
 #!/bin/bash
 
-# This is a binding script that was used to restrict number of cores and GPUS
-# We do not believe it is of particular interest, but we provide it as requested
+# This is a binding script that properly restricts each MPI rank to an appropriate set of CPU cores, GPUs, and NIcs, and avoid contention.
+# It supports AMD CPUs and auto-enables MPS if multiple ranks are bound on the same GPU.
+# This script cam also be used to restrict number of cores and GPUS and perform certain experiments.
+# The code is a bit messy but basically it counts the number of MPI ranks per node, the desired number of ranks per GPU (env variable MPI_PER_GPU), then
+# splits resources equally and assigns them to MPI ranks in round robin. An exception is made for certain AMD CPUs where the optimal NUMA affinity is not straighforward.
+# Cores are bound using taskset, GPUs using CUDA_VISIBLE_DEVICES, and NICs using UCX_NET_DEVICES.
 
 set -o pipefail
 

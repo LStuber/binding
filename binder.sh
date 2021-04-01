@@ -78,7 +78,7 @@ fi
    fi
 
 isocket=
-if ! [[ "$DISABLE_AMD_OPTI" == true ]] && lscpu | grep -q "AMD EPYC 7402" && [[ LS_NGPUS == 4 ]]; then
+if ! [[ "$DISABLE_AMD_OPTI" == true ]] && lscpu | grep -q "AMD EPYC 7402" && [[ $LS_NGPUS == 4 ]]; then
    #JUWELS
    GPUS=(0 1 2 3)
    CPUS=(3 4 1 2 7 8 5 6)

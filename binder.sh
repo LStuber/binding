@@ -81,7 +81,7 @@ isocket=
 if ! [[ "$DISABLE_AMD_OPTI" == true ]] && lscpu | grep -q "AMD EPYC 7402" && [[ $LS_NGPUS == 4 ]]; then
    #JUWELS
    GPUS=(0 1 2 3)
-   CPUS=(3 4 1 2 7 8 5 6)
+   CPUS=(3 2 1 0 7 6 5 4)
    NICS=(mlx5_0 mlx5_1 mlx5_2 mlx5_3)
 
    if [[ $DISABLE_HALF_NUMAS == true ]]; then
@@ -124,17 +124,19 @@ else
          ibdevs[$inic]=mlx5_$inic
       done
    fi
-   readonly num_ibdevs="${#ibdevs[@]}"
+   num_ibdevs="${#ibdevs[@]}"
    for igpu in $(seq 0 $((LS_NGPUS-1))); do
       GPUS[$igpu]=$igpu
-      CPUS[$igpu]=$((igpu*nsockets/LS_NGPUS))
       NICS[$igpu]=${ibdevs[$((igpu*num_ibdevs/LS_NGPUS))]}
 
-      if [[ $DISABLE_HALF_NUMAS == true ]]; then
-         CPUS[$igpu]=$((igpu*nsockets/LS_NGPUS/2*2))
-      fi
       if [[ -n $NB_NICS_PER_NODE ]]; then
          NICS[$igpu]=${ibdevs[$((igpu*num_ibdevs/LS_NGPUS/(num_ibdevs/NB_NICS_PER_NODE)*(num_ibdevs/NB_NICS_PER_NODE)))]}
+      fi
+   done
+   for icpu in $(seq 0 $((nsockets-1))); do
+      CPUS[$icpu]=$((icpu))
+      if [[ $DISABLE_HALF_NUMAS == true ]]; then
+         CPUS[$icpu]=$((icpu*2/2))
       fi
    done
 ##   echo "Rank $OMPI_COMM_WORLD_RANK $CUDA_VISIBLE_DEVICES $CUDA_VISIBLE_DEVICES_actual CPUS ${CPUS[0]} ${CPUS[1]} ${CPUS[2]} ${CPUS[3]} ${CPUS[4]} ${CPUS[5]} ${CPUS[6]} ${CPUS[7]} ${CPUS[8]}"

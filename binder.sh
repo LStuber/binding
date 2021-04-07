@@ -1,8 +1,9 @@
 #!/bin/bash
 
 # This is a binding script that properly restricts each MPI rank to an appropriate set of CPU cores, GPUs, and NIcs, in order to avoid contention.
-# This script cam also be used to restrict number of cores and GPUS and perform certain experiments.
-# This script will also auto-enable MPS if multiple ranks are bound on the same GPU.
+#   Usage: mpirun binder.sh <app>
+# This script can also be used to restrict number of cores and GPUS and perform certain experiments.
+# It will auto-enable MPS if multiple ranks are bound on the same GPU.
 # The code basically counts the number of MPI ranks per node, the desired number of ranks per GPU (env variable MPI_PER_GPU), then
 # splits resources equally and assigns them to MPI ranks in round robin. An exception is made for certain AMD CPUs where the optimal NUMA affinity is not straighforward.
 # Cores are bound using taskset, GPUs using CUDA_VISIBLE_DEVICES, and NICs using UCX_NET_DEVICES.

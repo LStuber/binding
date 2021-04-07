@@ -1,21 +1,31 @@
 #!/bin/bash
 
-# This is a binding script that properly restricts each MPI rank to an appropriate set of CPU cores, GPUs, and NIcs, and avoid contention.
-# It supports AMD CPUs and auto-enables MPS if multiple ranks are bound on the same GPU.
+# This is a binding script that properly restricts each MPI rank to an appropriate set of CPU cores, GPUs, and NIcs, in order to avoid contention.
 # This script cam also be used to restrict number of cores and GPUS and perform certain experiments.
-# The code is a bit messy but basically it counts the number of MPI ranks per node, the desired number of ranks per GPU (env variable MPI_PER_GPU), then
+# This script will also auto-enable MPS if multiple ranks are bound on the same GPU.
+# The code basically counts the number of MPI ranks per node, the desired number of ranks per GPU (env variable MPI_PER_GPU), then
 # splits resources equally and assigns them to MPI ranks in round robin. An exception is made for certain AMD CPUs where the optimal NUMA affinity is not straighforward.
 # Cores are bound using taskset, GPUs using CUDA_VISIBLE_DEVICES, and NICs using UCX_NET_DEVICES.
 
 set -o pipefail
 
-if [[ -z $LS_NGPUS ]]; then
-   LS_NGPUS=$(nvidia-smi --query-gpu=count --format=csv -i 0 | head -2 | tail -1) || (echo "Could not obtain number of GPUs"; exit -1)
+if [[ -z $1 ]]; then
+   echo "Usage: mpirun $0 <app>"
+   echo "  will bind your <app> properly and report the binding for each rank (GPUs, CPUs, NICs)."
+   echo
+   echo "This script reads the following environment variables:"
+   echo "  MPI_PER_GPU # default: 1. Desired number of ranks per GPU"
+   exit 0
 fi
 
-##if [[ $LS_NGPUS -ne 8 ]]; then
-##   echo "WARNING: Number of GPUs is different than 8. count=$LS_NGPUS"
-##fi
+
+# Get MPI rank/size using SLURM and/or OpenMPI env variables.
+if [[ -z $OMPI_COMM_WORLD_LOCAL_RANK ]]; then
+   export OMPI_COMM_WORLD_RANK=$SLURM_PROCID
+   export OMPI_COMM_WORLD_LOCAL_RANK=$SLURM_LOCALID
+   export OMPI_COMM_WORLD_SIZE=$SLURM_NTASKS
+   export OMPI_COMM_WORLD_LOCAL_SIZE=$((OMPI_COMM_WORLD_SIZE/SLURM_NNODES))
+fi
 
 if [[ -z $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
    if [[ -n $LSUB_NTASKS_PER_NODE ]]; then
@@ -25,24 +35,21 @@ if [[ -z $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
       exit -1
    fi
 fi
-if [[ -z $OMPI_COMM_WORLD_LOCAL_RANK ]]; then
-   export OMPI_COMM_WORLD_RANK=$SLURM_PROCID
-   export OMPI_COMM_WORLD_LOCAL_RANK=$SLURM_LOCALID
-   export OMPI_COMM_WORLD_SIZE=$SLURM_NTASKS
-   export OMPI_COMM_WORLD_LOCAL_SIZE=$((OMPI_COMM_WORLD_SIZE/SLURM_NNODES))
-fi
 
 if [[ -z $OMPI_COMM_WORLD_LOCAL_RANK ]]; then
-   echo "Error: OMPI_COMM_WORLD_LOCAL_RANK not defined"
+   echo "Error: OMPI_COMM_WORLD_LOCAL_RANK not defined. This script only supports SLURM and/or OpenMPI."
    exit -1
 fi
 
 
-#hardware
-#do not touch, required for cores count
+# Detect hardware
+# Number of GPUs on the node
+if [[ -z $LS_NGPUS ]]; then
+   LS_NGPUS=$(nvidia-smi --query-gpu=count --format=csv -i 0 | head -2 | tail -1) || (echo "Could not obtain number of GPUs"; exit -1)
+fi
+# Number of cores and sockets (NUMA nodes are used as "sockets" as they are more reliable)
 nsockets=$(lscpu | grep Sock | awk '{print $2}')
 ncores_per_socket=$(lscpu | grep "Core(s)" | awk '{print $4}')
-
 nnumas=$(lscpu | grep "NUMA node"  | head -1 | awk '{print $3}')
 
 ncores_per_socket=$((ncores_per_socket*nsockets/nnumas))
@@ -54,42 +61,17 @@ elif [[ -n $LS_FORCE_NSOCKETS ]]; then
    nsockets=$LS_FORCE_NSOCKETS
 fi
 
-# GPU binding
-   if [[ -n $MPI_PER_GPU ]]; then
-      export LS_MPS=$MPI_PER_GPU
-   fi
-   nmpi_per_gpu=1
-   if [[ -n $LS_MPS ]]; then
-      nmpi_per_gpu=$((nmpi_per_gpu*LS_MPS))
-   fi
-   if [[ $((nmpi_per_gpu*LS_NGPUS)) -lt $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
-      echo "Error: too many MPI ranks per GPU. $nmpi_per_gpu requested, $(((OMPI_COMM_WORLD_LOCAL_SIZE+LS_NGPUS-1)/LS_NGPUS)) found. Try setting MPI_PER_GPU=$(((OMPI_COMM_WORLD_LOCAL_SIZE+LS_NGPUS-1)/LS_NGPUS))"
-      exit -1
-   fi
-   export CUDA_VISIBLE_DEVICES=$((OMPI_COMM_WORLD_LOCAL_RANK/nmpi_per_gpu))
-   if [[ -n $LS_PCI ]]; then
-      if [[ $((nmpi_per_gpu*LS_NGPUS/LS_PCI)) -lt $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
-         echo "Error: too many MPI ranks per GPU. $nmpi_per_gpu requested, $((OMPI_COMM_WORLD_LOCAL_SIZE/LS_NGPUS)) found. Try tweaking MPI_PER_GPU and LS_PCI."
-         exit -1
-      fi
-      if [[ $LS_PCI == 2ALLNUMA ]]; then
-         export CUDA_VISIBLE_DEVICES_actual=$((CUDA_VISIBLE_DEVICES/2*2))
-      else
-         #since LS_MPS is "nb of MPIs per GPU", but LS_PCI cheats, the actual LS_MPS desired by the user is LS_MPS/LS_PCI
-         export CUDA_VISIBLE_DEVICES=$((OMPI_COMM_WORLD_LOCAL_RANK*LS_PCI/nmpi_per_gpu))
-         export CUDA_VISIBLE_DEVICES_actual=$((OMPI_COMM_WORLD_LOCAL_RANK/nmpi_per_gpu*LS_PCI))
-      fi
-   fi
 
+# List the CPUs, NICs on the system, sorted by affinity with GPUs.
 isocket=
 if ! [[ "$DISABLE_AMD_OPTI" == true ]] && lscpu | grep -q "AMD EPYC 7402" && [[ $LS_NGPUS == 4 ]]; then
-   #JUWELS
+   #Special optimization for JUWELS
    GPUS=(0 1 2 3)
    CPUS=(3 2 1 0 7 6 5 4)
    NICS=(mlx5_0 mlx5_1 mlx5_2 mlx5_3)
 
    if [[ $DISABLE_HALF_NUMAS == true ]]; then
-   CPUS=(3 3 1 1 7 7 5 5)
+   CPUS=(3 1 7 5)
    fi
    if [[ -n $NICS_PER_NODE ]]; then
       for igpu in $(seq 0 $((LS_NGPUS-1))); do
@@ -97,13 +79,13 @@ if ! [[ "$DISABLE_AMD_OPTI" == true ]] && lscpu | grep -q "AMD EPYC 7402" && [[ 
       done
    fi
 elif lscpu | grep -q "AMD EPYC 7742" && ! [[ "$DISABLE_AMD_OPTI" == true ]]; then
-   #DGX A100
+   #Special optimization for DGX A100
    GPUS=(0 1 2 3 4 5 6 7)
    CPUS=(3 2 1 0 7 6 5 4)
    NICS=(mlx5_1 mlx5_0 mlx5_3 mlx5_2 mlx5_7 mlx5_6 mlx5_9 mlx5_8)
 
    if [[ $DISABLE_HALF_NUMAS == true ]]; then
-   CPUS=(3 3 1 1 7 7 5 5)
+   CPUS=(3 1 7 5)
    fi
    if [[ -n $NICS_PER_NODE ]]; then
       for igpu in $(seq 0 $((LS_NGPUS-1))); do
@@ -111,7 +93,7 @@ elif lscpu | grep -q "AMD EPYC 7742" && ! [[ "$DISABLE_AMD_OPTI" == true ]]; the
       done
    fi
 else
-   #generic system
+   #generic system, sequential order assumed
    GPUS=
    CPUS=
    NICS=
@@ -139,93 +121,146 @@ else
    done
    for icpu in $(seq 0 $((nsockets-1))); do
       CPUS[$icpu]=$((icpu))
-      if [[ $DISABLE_HALF_NUMAS == true ]]; then
-         CPUS[$icpu]=$((icpu*2/2))
-      fi
    done
-##   echo "Rank $OMPI_COMM_WORLD_RANK $CUDA_VISIBLE_DEVICES $CUDA_VISIBLE_DEVICES_actual CPUS ${CPUS[0]} ${CPUS[1]} ${CPUS[2]} ${CPUS[3]} ${CPUS[4]} ${CPUS[5]} ${CPUS[6]} ${CPUS[7]} ${CPUS[8]}"
+   if [[ $DISABLE_HALF_NUMAS == true ]]; then
+      for icpu in $(seq 0 2 $((nsockets-1))); do
+         CPUS[$icpu]=$((icpu))
+      done
+   fi
 fi
 
+# BINDING
+
+nGPUs=${#GPUS[@]}
+nCPUs=${#CPUS[@]}
+nNICs=${#NICS[@]}
+
+if [[ $LS_DEBUG == 1 ]] && [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
+   echo "Debug Hardware found: nsockets=$nsockets GPUs: ${GPUS[*]} CPUS: ${CPUS[*]}"
+fi
+
+# Handle certain special cases
+# Detect if multiple MPI ranks are bound to the same GPU and check that it is consistent with MPI_SIZE.
+if [[ -z $MPI_PER_GPU ]]; then
+   if [[ $nGPUs -lt $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
+      if [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
+         echo "Error: there are $OMPI_COMM_WORLD_LOCAL_SIZE MPI ranks per node, but you seem to have only $nGPUs GPUs."
+         echo "To prevent mistakes, if you intended to use more than 1 MPI rank per GPU, this script requires you to set the env variable MPI_PER_GPU."
+         echo "Try to rerun with: export MPI_PER_GPU=$(((OMPI_COMM_WORLD_LOCAL_SIZE+nGPUs-1)/nGPUs))"
+      fi
+      exit -1
+   fi
+   MPI_PER_GPU=1
+else
+   if [[ $((nGPUs*MPI_PER_GPU)) -lt $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
+      if [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
+         echo "Error: unsatisfiable value for MPI_PER_GPU. $OMPI_COMM_WORLD_LOCAL_SIZE ranks per node spawned, but only $nGPUs GPUs x $MPI_PER_GPU ranks requested."
+         echo "Try setting MPI_PER_GPU=$(((OMPI_COMM_WORLD_LOCAL_SIZE+nGPUs-1)/nGPUs))"
+      fi
+      exit -1
+   fi
+fi
+# LS_PCI is an experimental flag to skip half the GPUs. Default LS_PCI=1 uses all GPUs. LS_PCI=2 will use 0,2,4,6
+if [[ -n $LS_PCI ]]; then
+   if [[ $((nGPUs*MPI_PER_GPU)) -lt $((OMPI_COMM_WORLD_LOCAL_SIZE*LS_PCI)) ]]; then
+      if [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
+         echo "Error: unsatisfiable value for LS_PCI. $OMPI_COMM_WORLD_LOCAL_SIZE ranks per node spawned, but only $((nGPUs/LS_PCI)) GPUs x $MPI_PER_GPU ranks requested."
+      fi
+      exit -1
+   fi
+else
+   LS_PCI=1
+fi
+# Last special case: on certain CPUs, some NUMA nodes do not have affinity to the GPU (eg. DGX).
+
+## BINDING
+my_gpu_id=$((OMPI_COMM_WORLD_LOCAL_RANK/MPI_PER_GPU/LS_PCI*LS_PCI))
+my_cpu_id=$((my_gpu_id*nCPUs/nGPUs))
+my_nic_id=$((my_gpu_id*nNICs/nGPUs))
+
+nmpi_per_node=$((MPI_PER_GPU*nGPUs)) # Max number of ranks that could be spawned if the node was full. More reliable for calculations than OMPI_LOCAL_SIZE.
+
+# GPU binding using CUDA_VISIBLE_DEVICES
+export CUDA_VISIBLE_DEVICES=${GPUS[$my_gpu_id]}
+
 ## NIC binding
-export OMPI_MCA_btl_openib_if_include=${NICS[${CUDA_VISIBLE_DEVICES::1}]}
+export OMPI_MCA_btl_openib_if_include=${NICS[$my_nic_id]}
 export UCX_NET_DEVICES=$OMPI_MCA_btl_openib_if_include:1
 
 ## CPU binding
+# This one is trickier since 2 cases must be handled: multiple NUMA nodes per GPU, or multiple GPUs per NUMA node.
 
-# calculate cores/sockets per mpi
-if [[ -z $nmpi_per_socket ]]; then
-   nmpi_per_socket=$((LS_NGPUS*nmpi_per_gpu / nsockets))
-   ##      nmpi_per_socket=$((OMPI_COMM_WORLD_LOCAL_SIZE / nsockets))
-fi
-if [[ -n $LS_PCI ]]; then
-   nmpi_per_socket=$((nmpi_per_socket/LS_PCI))
-fi
+nsockets_per_mpi=1
+nmpi_per_socket=$((nmpi_per_node/nsockets))
+
 if [[ $nmpi_per_socket == 0 ]]; then
-   echo "Error: $nmpi_per_socket MPI ranks per socket"
-   export nmpi_per_socket=1
-   exit -1
-fi
-##if [[ $DISABLE_HALF_NUMAS == true ]]; then
-##   nmpi_per_socket=$((nmpi_per_socket*2))
-##fi
-if [[ -z $isocket ]]; then
-   isocket=${CPUS[$((OMPI_COMM_WORLD_LOCAL_RANK / nmpi_per_socket))]}
+   #Weird case: multiple sockets are available per GPU
+   nsockets_per_mpi=$((nCPUs/nGPUs))
+   nmpi_per_socket=1
 fi
 
-if [[ -n $NCORES_PER_MPI ]];then
-   export LS_NCORES_PER_MPI=$NCORES_PER_MPI
-fi
-if [[ -z $LS_NCORES_PER_MPI ]];then
+requested_env_variable="[INTERNAL SCRIPT]"
+if [[ -z $NCORES_PER_MPI ]]; then
    if [[ -z $OMP_NUM_THREADS ]]; then
       ncores_per_mpi=$((ncores_per_socket/nmpi_per_socket))
    else
-      ncores_per_mpi=$OMP_NUM_THREADS
+      requested_env_variable="OMP_NUM_THREADS"
+      if [[ $LS_HYPERTHREAD == true ]]; then
+         ncores_per_mpi=$((OMP_NUM_THREADS/2))
+      else
+         ncores_per_mpi=$OMP_NUM_THREADS
+      fi
    fi
 else
-   ncores_per_mpi=$LS_NCORES_PER_MPI
+   requested_env_variable="NCORES_PER_MPI"
+   ncores_per_mpi=$NCORES_PER_MPI
 fi
+ncores_per_mpi_avail=$((ncores_per_socket/nmpi_per_socket))
 
-if [[ $ncores_per_mpi -gt $((ncores_per_socket/nmpi_per_socket)) ]]; then
-   echo "Error: oversubscription detected. $ncores_per_mpi cores per MPI used, $((ncores_per_socket/nmpi_per_socket)) available"
+if [[ $ncores_per_mpi -gt $ncores_per_mpi_avail ]]; then
+   if [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
+      echo "Error: oversubscription detected. $ncores_per_mpi cores per rank requested through $requested_env_variable, but only $ncores_per_mpi_avail available."
+      if ! [[ $LS_HYPERTHREAD == true ]]; then
+         echo "If you intended to use hyperthreading, please export LS_HYPERTHREAD=true. Otherwise, set $requested_env_variable=$ncores_per_mpi_avail"
+      fi
+   fi
    exit -1;
 fi
 
-if [[ $LS_DEBUG == 1 ]]; then
-   echo "Debug ncores_per_socket=$ncores_per_socket nsockets=$nsockets LS_FORCE_NSOCKETS=$LS_FORCE_NSOCKETS LS_NCORES_PER_MPI=$LS_NCORES_PER_MPI nmpi_per_socket=$nmpi_per_socket OMP_NUM_THREADS=$OMP_NUM_THREADS ncores_per_mpi=$ncores_per_mpi tmp_gpuid=$tmp_gpuid isocket=$isocket"
+if [[ $LS_DEBUG == 1 ]] && [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
+   echo "Debug ncores_per_socket=$ncores_per_socket ncores_per_mpi=$ncores_per_mpi ncores_per_mpi_avail=$ncores_per_mpi_avail nsockets_per_mpi=$nsockets_per_mpi"
 fi
+
+#finally do the socket/core binding
+for my_id in $(seq $my_cpu_id $((my_cpu_id+nsockets_per_mpi-1)) ); do
+   isocket=${CPUS[$my_id]}
+   #establish list of cores
+   intrasocket_rank=$((OMPI_COMM_WORLD_LOCAL_RANK % nmpi_per_socket))
+   if [[ $CORE_ORDER == sequential ]]; then
+      first=$((isocket*ncores_per_socket + intrasocket_rank*ncores_per_mpi))
+      cores=$first
+      for i in $(seq 1 $((ncores_per_mpi-1))); do
+         cores=$cores,$((first+i))
+      done
+   else
+      #Scaled over the range of cores available
+      first=$((isocket*ncores_per_socket + intrasocket_rank*ncores_per_mpi_avail))
+      cores=$first
+      for i in $(seq 1 $((ncores_per_mpi-1))); do
+         cores=$cores,$((first+i*ncores_per_mpi_avail/ncores_per_mpi))
+      done
+   fi
+   if [[ $LS_HYPERTHREAD == 1 ]]; then
+      hyperthread_start=$((ncores_per_socket*nsockets))
+      for c in $(echo $cores | tr ',' ' '); do
+         cores=$cores,$((c+hyperthread_start))
+      done
+   fi
+done
 
 if [[ -n $OMP_NUM_THREADS ]] && [[ -z $OMP_PROC_BIND ]]; then
    export OMP_PROC_BIND=true
 fi
-
-if [[ -z $ncores_per_mpi_aligned ]]; then
-   ncores_per_mpi_aligned=ncores_per_mpi
-fi
-
-if [[ $((ncores_per_socket/nmpi_per_socket )) -lt $ncores_per_mpi_aligned ]]; then
-   echo "Error: oversubscription detected. $ncores_per_mpi_aligned cores/MPI requested, $((ncores_per_socket/nmpi_per_socket )) available"
-   exit -1
-fi
-
-#establish list of cores
-intrasocket_rank=$((OMPI_COMM_WORLD_LOCAL_RANK % nmpi_per_socket))
-##first=$((isocket*ncores_per_socket + intrasocket_rank*ncores_per_mpi_aligned))
-first=$((isocket*ncores_per_socket + intrasocket_rank*ncores_per_socket/nmpi_per_socket))
-if [[ -n $LS_SOCKET_START ]]; then
-   first=$((first+LS_SOCKET_START))
-fi
-cores=$first
-for i in $(seq 1 $((ncores_per_mpi-1))); do
-   cores=$cores,$((first+i))
-done
-
-if [[ $HYPERTHREAD == 1 ]]; then
-   hyperthread_start=$((ncores_per_socket*nsockets))
-   for c in $(echo $cores | tr ',' ' '); do
-      cores=$cores,$((c+hyperthread_start))
-   done
-fi
-
 
 if [[ -n "$FORCE_UCX_NET_DEVICES" ]]; then
    if [[ "$FORCE_UCX_NET_DEVICES" == unset ]]; then
@@ -235,9 +270,6 @@ if [[ -n "$FORCE_UCX_NET_DEVICES" ]]; then
    fi
 fi
 
-if [[ -n $CUDA_VISIBLE_DEVICES_actual ]]; then
-   export CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES_actual
-fi
 if [[ $GPU_BINDING == unset ]]; then
    unset CUDA_VISIBLE_DEVICES
 fi
@@ -262,7 +294,7 @@ if [[ $ENABLE_MPS == true ]] || [[ $ENABLE_MPS == 1 ]]; then
    fi
 fi
 
-echo MPI Rank $OMPI_COMM_WORLD_RANK host $(hostname) GPU=$CUDA_VISIBLE_DEVICES cores=$cores UCX_NET_DEVICES=$UCX_NET_DEVICES
+echo "MPI Rank $OMPI_COMM_WORLD_RANK host $(hostname) GPU=$CUDA_VISIBLE_DEVICES cores=$cores UCX_NET_DEVICES=$UCX_NET_DEVICES"
 exec taskset -c $cores $@
 
 if [[ $ENABLE_MPS == true ]] || [[ $ENABLE_MPS == 1 ]]; then

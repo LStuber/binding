@@ -241,7 +241,7 @@ if [[ $ncores_per_mpi -gt $ncores_per_mpi_avail ]]; then
 fi
 
 if [[ $LS_DEBUG == 1 ]] && [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
-   echo "Debug ncores_per_socket=$ncores_per_socket ncores_per_mpi=$ncores_per_mpi ncores_per_mpi_avail=$ncores_per_mpi_avail nsockets_per_mpi=$nsockets_per_mpi"
+   echo "Debug ncores_per_socket=$ncores_per_socket ncores_per_mpi=$ncores_per_mpi ncores_per_mpi_avail=$ncores_per_mpi_avail nsockets_per_mpi=$nsockets_per_mpi  nmpi_per_socket=$nmpi_per_socket"
 fi
 
 #finally do the socket/core binding

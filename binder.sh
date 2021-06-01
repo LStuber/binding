@@ -145,9 +145,9 @@ nNICs=${#NICS[@]}
 
 if [[ $LS_DEBUG == 1 ]] && [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
    if [[ "$nsockets" == "$nCPUs" ]]; then
-       nsockets_string="nsockets=$nsockets"
+       nsockets_string="$nsockets"
    else
-       nsockets_string="nsockets=$nsockets ($nCPUs used)"
+       nsockets_string="$nsockets ($nCPUs used)"
    fi
    echo "Debug Hardware found: nsockets=$nsockets_string GPUs: ${GPUS[*]} CPUS: ${CPUS[*]}"
 fi

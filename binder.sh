@@ -204,7 +204,7 @@ export UCX_NET_DEVICES=$OMPI_MCA_btl_openib_if_include:1
 # This one is trickier since 2 cases must be handled: multiple NUMA nodes per GPU, or multiple GPUs per NUMA node.
 
 nsockets_per_mpi=1
-nmpi_per_socket=$((nmpi_per_node/nsockets))
+nmpi_per_socket=$((nmpi_per_node/nCPUs))
 
 if [[ $nmpi_per_socket == 0 ]]; then
    #Weird case: multiple sockets are available per GPU

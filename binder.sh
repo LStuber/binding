@@ -127,12 +127,13 @@ else
          NICS[$igpu]=${ibdevs[$((igpu*num_ibdevs/LS_NGPUS/(num_ibdevs/NB_NICS_PER_NODE)*(num_ibdevs/NB_NICS_PER_NODE)))]}
       fi
    done
-   for icpu in $(seq 0 $((nsockets-1))); do
-      CPUS[$icpu]=$((icpu))
-   done
-   if [[ $DISABLE_HALF_NUMAS == true ]]; then
-      for icpu in $(seq 0 2 $((nsockets-1))); do
+   if [[ $DISABLE_HALF_NUMAS != true ]]; then
+      for icpu in $(seq 0 $((nsockets-1))); do
          CPUS[$icpu]=$((icpu))
+      done
+   else
+      for icpu in $(seq 0 2 $((nsockets-1))); do
+         CPUS[$((icpu/2))]=$((icpu))
       done
    fi
 fi
@@ -153,6 +154,38 @@ if [[ $LS_DEBUG == 1 ]] && [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
 fi
 
 # Handle certain special cases
+
+# LS_PCI is an experimental flag to skip half the GPUs. Default LS_PCI=1 uses all GPUs. LS_PCI=2 will use 0,2,4,6
+if [[ -n $LS_PCI ]]; then
+   if [[ $((nGPUs*MPI_PER_GPU)) -lt $((OMPI_COMM_WORLD_LOCAL_SIZE*LS_PCI)) ]]; then
+      if [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
+         echo "Error: unsatisfiable value for LS_PCI. $OMPI_COMM_WORLD_LOCAL_SIZE ranks per node spawned, but only $((nGPUs/LS_PCI)) GPUs x $MPI_PER_GPU ranks requested."
+      else
+         sleep 2
+      fi
+      exit -1
+   fi
+   ## skip half of the GPUs
+   for igpu in $(seq 0 $((nGPUs/LS_PCI-1))); do
+      GPUS[$igpu]=${GPUS[$((igpu*LS_PCI))]}
+   done
+   for igpu in $(seq $((nGPUs/LS_PCI)) $nGPUs); do
+      unset "GPUS[$igpu]"
+   done
+   nGPUs=$((nGPUs/LS_PCI))
+   if [[ $nGPUs != ${#GPUS[@]} ]]; then
+      echo "Internal $0 script error. Please report this bug."
+      exit -1
+   fi
+   if [[ $LS_DEBUG == 1 ]] && [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
+      echo "Debug LS_PCI GPUs: ${GPUS[*]} CPUS: ${CPUS[*]}"
+   fi
+   LS_PCI_DEBUG_STRING=" (some GPUs are hidden due to LS_PCI)"
+else
+   LS_PCI=1
+   LS_PCI_DEBUG_STRING=""
+fi
+
 # Detect if multiple MPI ranks are bound to the same GPU and check that it is consistent with MPI_SIZE.
 if [[ -z $MPI_PER_GPU ]]; then
    if [[ $nGPUs -lt $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
@@ -160,6 +193,8 @@ if [[ -z $MPI_PER_GPU ]]; then
          echo "Error: there are $OMPI_COMM_WORLD_LOCAL_SIZE MPI ranks per node, but you seem to have only $nGPUs GPUs."
          echo "To prevent mistakes, if you intended to use more than 1 MPI rank per GPU, this script requires you to set the env variable MPI_PER_GPU."
          echo "Try to rerun with: export MPI_PER_GPU=$(((OMPI_COMM_WORLD_LOCAL_SIZE+nGPUs-1)/nGPUs))"
+      else
+         sleep 2
       fi
       exit -1
    fi
@@ -169,29 +204,21 @@ else
       if [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
          echo "Error: unsatisfiable value for MPI_PER_GPU. $OMPI_COMM_WORLD_LOCAL_SIZE ranks per node spawned, but only $nGPUs GPUs x $MPI_PER_GPU ranks requested."
          echo "Try setting MPI_PER_GPU=$(((OMPI_COMM_WORLD_LOCAL_SIZE+nGPUs-1)/nGPUs))"
+      else
+         sleep 2
       fi
       exit -1
    fi
-fi
-# LS_PCI is an experimental flag to skip half the GPUs. Default LS_PCI=1 uses all GPUs. LS_PCI=2 will use 0,2,4,6
-if [[ -n $LS_PCI ]]; then
-   if [[ $((nGPUs*MPI_PER_GPU)) -lt $((OMPI_COMM_WORLD_LOCAL_SIZE*LS_PCI)) ]]; then
-      if [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
-         echo "Error: unsatisfiable value for LS_PCI. $OMPI_COMM_WORLD_LOCAL_SIZE ranks per node spawned, but only $((nGPUs/LS_PCI)) GPUs x $MPI_PER_GPU ranks requested."
-      fi
-      exit -1
-   fi
-else
-   LS_PCI=1
 fi
 # Last special case: on certain CPUs, some NUMA nodes do not have affinity to the GPU (eg. DGX).
+# removed?
 
 ## BINDING
-my_gpu_id=$((OMPI_COMM_WORLD_LOCAL_RANK/MPI_PER_GPU/LS_PCI*LS_PCI))
-my_cpu_id=$((my_gpu_id*nCPUs/nGPUs))
-my_nic_id=$((my_gpu_id*nNICs/nGPUs))
+my_gpu_id=$((OMPI_COMM_WORLD_LOCAL_RANK/MPI_PER_GPU))
+my_cpu_id=$((OMPI_COMM_WORLD_LOCAL_RANK*nCPUs/nGPUs/MPI_PER_GPU))
+my_nic_id=$((OMPI_COMM_WORLD_LOCAL_RANK*nNICs/nGPUs/MPI_PER_GPU))
 
-nmpi_per_node=$((MPI_PER_GPU*nGPUs)) # Max number of ranks that could be spawned if the node was full. More reliable for calculations than OMPI_LOCAL_SIZE.
+nmpi_per_node=$((MPI_PER_GPU*nGPUs)) # Max number of ranks that could be spawned if the node was full. More reliable for calculations than OMPI_LOCAL_SIZE which can sometimes differ between nodes.
 
 # GPU binding using CUDA_VISIBLE_DEVICES
 export CUDA_VISIBLE_DEVICES=${GPUS[$my_gpu_id]}
@@ -203,11 +230,12 @@ export UCX_NET_DEVICES=$OMPI_MCA_btl_openib_if_include:1
 ## CPU binding
 # This one is trickier since 2 cases must be handled: multiple NUMA nodes per GPU, or multiple GPUs per NUMA node.
 
+# Note: here we assume that all CPUs must be used and are different, if some NUMA nodes have been disabled due to proximity, that must have been done in earlier steps
 nsockets_per_mpi=1
 nmpi_per_socket=$((nmpi_per_node/nCPUs))
 
 if [[ $nmpi_per_socket == 0 ]]; then
-   #Weird case: multiple sockets are available per GPU
+   #Weird case: multiple sockets are available per MPI rank
    nsockets_per_mpi=$((nCPUs/nGPUs))
    nmpi_per_socket=1
 fi
@@ -236,6 +264,8 @@ if [[ $ncores_per_mpi -gt $ncores_per_mpi_avail ]]; then
       if ! [[ $LS_HYPERTHREAD == true ]]; then
          echo "If you intended to use hyperthreading, please export LS_HYPERTHREAD=true. Otherwise, set $requested_env_variable=$ncores_per_mpi_avail"
       fi
+   else
+      sleep 2
    fi
    exit -1;
 fi

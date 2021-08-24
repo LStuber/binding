@@ -155,6 +155,31 @@ fi
 
 # Handle certain special cases
 
+# Detect if multiple MPI ranks are bound to the same GPU and check that it is consistent with MPI_SIZE.
+if [[ -z $MPI_PER_GPU ]]; then
+   if [[ $nGPUs -lt $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
+      if [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
+         echo "Error: there are $OMPI_COMM_WORLD_LOCAL_SIZE MPI ranks per node, but you seem to have only $nGPUs GPUs."
+         echo "To prevent mistakes, if you intended to use more than 1 MPI rank per GPU, this script requires you to set the env variable MPI_PER_GPU."
+         echo "Try to rerun with: export MPI_PER_GPU=$(((OMPI_COMM_WORLD_LOCAL_SIZE+nGPUs-1)/nGPUs))"
+      else
+         sleep 2
+      fi
+      exit -1
+   fi
+   MPI_PER_GPU=1
+else
+   if [[ $((nGPUs*MPI_PER_GPU)) -lt $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
+      if [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
+         echo "Error: unsatisfiable value for MPI_PER_GPU. $OMPI_COMM_WORLD_LOCAL_SIZE ranks per node spawned, but only $nGPUs GPUs x $MPI_PER_GPU ranks requested."
+         echo "Try setting MPI_PER_GPU=$(((OMPI_COMM_WORLD_LOCAL_SIZE+nGPUs-1)/nGPUs))"
+      else
+         sleep 2
+      fi
+      exit -1
+   fi
+fi
+
 # LS_PCI is an experimental flag to skip half the GPUs. Default LS_PCI=1 uses all GPUs. LS_PCI=2 will use 0,2,4,6
 if [[ -n $LS_PCI ]]; then
    if [[ $((nGPUs*MPI_PER_GPU)) -lt $((OMPI_COMM_WORLD_LOCAL_SIZE*LS_PCI)) ]]; then
@@ -186,30 +211,6 @@ else
    LS_PCI_DEBUG_STRING=""
 fi
 
-# Detect if multiple MPI ranks are bound to the same GPU and check that it is consistent with MPI_SIZE.
-if [[ -z $MPI_PER_GPU ]]; then
-   if [[ $nGPUs -lt $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
-      if [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
-         echo "Error: there are $OMPI_COMM_WORLD_LOCAL_SIZE MPI ranks per node, but you seem to have only $nGPUs GPUs."
-         echo "To prevent mistakes, if you intended to use more than 1 MPI rank per GPU, this script requires you to set the env variable MPI_PER_GPU."
-         echo "Try to rerun with: export MPI_PER_GPU=$(((OMPI_COMM_WORLD_LOCAL_SIZE+nGPUs-1)/nGPUs))"
-      else
-         sleep 2
-      fi
-      exit -1
-   fi
-   MPI_PER_GPU=1
-else
-   if [[ $((nGPUs*MPI_PER_GPU)) -lt $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
-      if [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
-         echo "Error: unsatisfiable value for MPI_PER_GPU. $OMPI_COMM_WORLD_LOCAL_SIZE ranks per node spawned, but only $nGPUs GPUs x $MPI_PER_GPU ranks requested."
-         echo "Try setting MPI_PER_GPU=$(((OMPI_COMM_WORLD_LOCAL_SIZE+nGPUs-1)/nGPUs))"
-      else
-         sleep 2
-      fi
-      exit -1
-   fi
-fi
 # Last special case: on certain CPUs, some NUMA nodes do not have affinity to the GPU (eg. DGX).
 # removed?
 

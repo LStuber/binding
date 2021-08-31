@@ -56,11 +56,19 @@ if [[ -z $LS_NGPUS ]]; then
    LS_NGPUS=$(nvidia-smi --query-gpu=count --format=csv -i 0 | head -2 | tail -1) || (echo "$0 Error: could not obtain number of GPUs"; exit 103)
 fi
 # Number of cores and sockets (NUMA nodes are used as "sockets" as they are more reliable)
-nsockets=$(lscpu | grep Sock | awk '{print $2}')
-ncores_per_socket=$(lscpu | grep "Core(s)" | awk '{print $4}')
-nnumas=$(lscpu | grep "NUMA node"  | head -1 | awk '{print $3}')
+lscpu="$(lscpu)" #cache
+nsockets=$(echo "$lscpu" | grep Sock | awk '{print $2}')
+ncores=$(echo "$lscpu" | grep "Core(s)" | awk '{print $4}')
+nnumas=$(echo "$lscpu" | grep "NUMA node"  | head -1 | awk '{print $3}')
 
-ncores_per_socket=$((ncores_per_socket*nsockets/nnumas))
+ncores_avail_per_socket=$((ncores*nsockets/nnumas))
+if [[ $LS_HYPERTHREAD == true ]] || [[ $LS_HYPERTHREAD == 1 ]]; then
+   hyperthread_cores=2
+   nthreads_avail_per_socket=$((ncores_avail_per_socket*hyperthread_cores))
+else
+   hyperthread_cores=1
+   nthreads_avail_per_socket=$ncores_avail_per_socket
+fi
 nsockets=$nnumas
 
 if [[ -n $NCPU_SOCKETS ]]; then
@@ -72,7 +80,7 @@ fi
 
 # List the CPUs, NICs on the system, sorted by affinity with GPUs.
 isocket=
-if ! [[ "$DISABLE_AMD_OPTI" == true ]] && lscpu | grep -q "AMD EPYC 7402" && [[ $LS_NGPUS == 4 ]]; then
+if ! [[ "$DISABLE_AMD_OPTI" == true ]] && echo "$lscpu" | grep -q "AMD EPYC 7402" && [[ $LS_NGPUS == 4 ]]; then
    #Special optimization for JUWELS
    GPUS=(0 1 2 3)
    CPUS=(3 2 1 0 7 6 5 4)
@@ -86,7 +94,7 @@ if ! [[ "$DISABLE_AMD_OPTI" == true ]] && lscpu | grep -q "AMD EPYC 7402" && [[ 
          NICS[$igpu]=${NICS[$((igpu/(8/NICS_PER_NODE)*(8/NICS_PER_NODE)))]}
       done
    fi
-elif lscpu | grep -q "AMD EPYC 7742" && ! [[ "$DISABLE_AMD_OPTI" == true ]]; then
+elif echo "$lscpu" | grep -q "AMD EPYC 7742" && ! [[ "$DISABLE_AMD_OPTI" == true ]]; then
    #Special optimization for DGX A100
    GPUS=(0 1 2 3 4 5 6 7)
    CPUS=(3 2 1 0 7 6 5 4)
@@ -202,7 +210,7 @@ if [[ -n $LS_PCI ]]; then
    done
    nGPUs=$((nGPUs/LS_PCI))
    if [[ $nGPUs != ${#GPUS[@]} ]]; then
-      echo "Internal $0 script error. Please report this bug."
+      echo "Internal $0 error. Please report this bug."
       exit 107
    fi
    if [[ $LS_DEBUG == 1 ]] && [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
@@ -213,9 +221,6 @@ else
    LS_PCI=1
    LS_PCI_DEBUG_STRING=""
 fi
-
-# Last special case: on certain CPUs, some NUMA nodes do not have affinity to the GPU (eg. DGX).
-# removed?
 
 ## BINDING
 my_gpu_id=$((OMPI_COMM_WORLD_LOCAL_RANK/MPI_PER_GPU))
@@ -244,29 +249,47 @@ if [[ $nmpi_per_socket == 0 ]]; then
    nmpi_per_socket=1
 fi
 
-requested_env_variable="[INTERNAL SCRIPT]"
+requested_env_variable="SCRIPT_AUTODETECTION]"
 if [[ -z $NCORES_PER_MPI ]]; then
    if [[ -z $OMP_NUM_THREADS ]]; then
-      ncores_per_mpi=$((ncores_per_socket/nmpi_per_socket))
+      nthreads_per_mpi=$((nthreads_avail_per_socket/nmpi_per_socket))
    else
       requested_env_variable="OMP_NUM_THREADS"
-      if [[ $LS_HYPERTHREAD == true ]]; then
-         ncores_per_mpi=$((OMP_NUM_THREADS/2))
-      else
-         ncores_per_mpi=$OMP_NUM_THREADS
-      fi
+      nthreads_per_mpi=$OMP_NUM_THREADS
    fi
 else
    requested_env_variable="NCORES_PER_MPI"
-   ncores_per_mpi=$NCORES_PER_MPI
+   nthreads_per_mpi=$NCORES_PER_MPI
 fi
-ncores_per_mpi_avail=$((ncores_per_socket/nmpi_per_socket))
+nthreads_avail_per_mpi=$((nthreads_avail_per_socket/nmpi_per_socket))
+if [[ $nthreads_avail_per_mpi -le 0 ]]; then
+   if [[ $OMPI_COMM_WORLD_SIZE -lt $nmpi_per_socket ]]; then
+      if [[ $OMPI_COMM_WORLD_RANK == 0 ]] || [[ $LS_DEBUG == 1 ]]; then
+         echo "$0 Error: the requested binding settings would cause overlap if all GPUs were used on the node. This is an error as it complicates the script logic. Please explicitly set the number of GPUs wou want to use with export LS_NGPUs=<number of GPUs>"
+      else
+         sleep 2
+      fi
+      exit 114
+   else
+      if [[ $OMPI_COMM_WORLD_RANK == 0 ]] || [[ $LS_DEBUG == 1 ]]; then
+         echo "$0 error. The number of MPI ranks per socket ($nmpi_per_socket) exceeds cores available ($nthreads_avail_per_socket). This is possibly the result of setting MPI_PER_GPU to a value that would cause overlap."
+         if [[ -z $LS_PCI ]] || [[ $LS_PCI == 1 ]]; then
+            echo "If you plan to use only a subset of the GPUs, please explicitly set the number of GPUs wou want to use with export LS_NGPUs=<number of GPUs> or use the LS_PCI variable."
+         fi
+      else
+         sleep 2
+      fi
+      exit 112
+   fi
+fi
 
-if [[ $ncores_per_mpi -gt $ncores_per_mpi_avail ]]; then
+if [[ $nthreads_per_mpi -gt $nthreads_avail_per_mpi ]]; then
    if [[ $OMPI_COMM_WORLD_RANK == 0 ]] || [[ $LS_DEBUG == 1 ]]; then
-      echo "Error: oversubscription detected. $ncores_per_mpi cores per rank requested through $requested_env_variable, but only $ncores_per_mpi_avail available."
-      if ! [[ $LS_HYPERTHREAD == true ]]; then
-         echo "If you intended to use hyperthreading, please export LS_HYPERTHREAD=true. Otherwise, set $requested_env_variable=$ncores_per_mpi_avail"
+      echo "$0 Error: oversubscription detected. $nthreads_per_mpi cores per rank requested through $requested_env_variable, but only $nthreads_avail_per_mpi available."
+      if [[ $LS_HYPERTHREAD == true ]] || [[ $LS_HYPERTHREAD == 1 ]]; then
+         echo "Please set $requested_env_variable=$nthreads_avail_per_mpi"
+      else
+         echo "If you intended to use hyperthreading, please export LS_HYPERTHREAD=true. Otherwise, set $requested_env_variable=$nthreads_avail_per_mpi"
       fi
    else
       sleep 2
@@ -275,7 +298,7 @@ if [[ $ncores_per_mpi -gt $ncores_per_mpi_avail ]]; then
 fi
 
 if [[ $LS_DEBUG == 1 ]] && [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
-   echo "Debug ncores_per_socket=$ncores_per_socket ncores_per_mpi=$ncores_per_mpi ncores_per_mpi_avail=$ncores_per_mpi_avail nsockets_per_mpi=$nsockets_per_mpi  nmpi_per_socket=$nmpi_per_socket"
+   echo "Debug nthreads_avail_per_socket=$nthreads_avail_per_socket nthreads_per_mpi=$nthreads_per_mpi nthreads_avail_per_mpi=$nthreads_avail_per_mpi nsockets_per_mpi=$nsockets_per_mpi  nmpi_per_socket=$nmpi_per_socket"
 fi
 
 #finally do the socket/core binding
@@ -283,26 +306,39 @@ for my_id in $(seq $my_cpu_id $((my_cpu_id+nsockets_per_mpi-1)) ); do
    isocket=${CPUS[$my_id]}
    #establish list of cores
    intrasocket_rank=$((OMPI_COMM_WORLD_LOCAL_RANK % nmpi_per_socket))
+   hyperthread_start=$((ncores_avail_per_socket*nsockets))
+   ncores_per_mpi=$((nthreads_per_mpi/hyperthread_cores))
+   if [[ $ncores_per_mpi == 0 ]]; then
+      ncores_per_mpi=1
+   fi
+   cores=
    if [[ $CORE_ORDER == sequential ]]; then
-      first=$((isocket*ncores_per_socket + intrasocket_rank*ncores_per_mpi))
-      cores=$first
-      for i in $(seq 1 $((ncores_per_mpi-1))); do
-         cores=$cores,$((first+i))
+      first=$((isocket*ncores_avail_per_socket + intrasocket_rank*nthreads_per_mpi))
+      ihyper=$(((isocket+1)*ncores_avail_per_socket))
+      for i in $(seq 0 $((nthreads_per_mpi-1))); do
+         if [[ $((first+i)) -lt $ihyper ]]; then
+            cores=$cores$((first+i)),
+         else
+            #hyperthreading
+            cores=$cores$((hyperthread_start+i+first-ihyper+isocket*ncores_avail_per_socket)),
+         fi
       done
    else
       #Scaled over the range of cores available
-      first=$((isocket*ncores_per_socket + intrasocket_rank*ncores_per_mpi_avail))
-      cores=$first
-      for i in $(seq 1 $((ncores_per_mpi-1))); do
-         cores=$cores,$((first+i*ncores_per_mpi_avail/ncores_per_mpi))
+      first=$((isocket*ncores_avail_per_socket + intrasocket_rank*nthreads_avail_per_mpi))
+      ihyper=$(((isocket+1)*ncores_avail_per_socket))
+      for i in $(seq 0 $((nthreads_per_mpi-1))); do
+         idest=$((first+i*nthreads_avail_per_mpi/nthreads_per_mpi))
+         if [[ $idest -lt $ihyper ]]; then
+            cores=$cores$idest,
+         else
+            #hyperthreading
+            cores=$cores$((hyperthread_start+idest-ihyper+isocket*ncores_avail_per_socket)),
+         fi
       done
    fi
-   if [[ $LS_HYPERTHREAD == 1 ]]; then
-      hyperthread_start=$((ncores_per_socket*nsockets))
-      for c in $(echo $cores | tr ',' ' '); do
-         cores=$cores,$((c+hyperthread_start))
-      done
-   fi
+   #remove last comma
+   cores=${cores::-1}
 done
 
 if [[ -n $OMP_NUM_THREADS ]] && [[ -z $OMP_PROC_BIND ]]; then

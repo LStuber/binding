@@ -35,25 +35,25 @@ if [[ -z $OMPI_COMM_WORLD_LOCAL_RANK ]]; then
    export OMPI_COMM_WORLD_LOCAL_SIZE=$MPI_LOCALNRANKS
 fi
 
+if [[ -z $OMPI_COMM_WORLD_LOCAL_RANK ]]; then
+   echo "$0 Error: OMPI_COMM_WORLD_LOCAL_RANK not defined. This script only supports SLURM and/or OpenMPI."
+   exit 101
+fi
+
 if [[ -z $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
    if [[ -n $LSUB_NTASKS_PER_NODE ]]; then
       OMPI_COMM_WORLD_LOCAL_SIZE=$LSUB_NTASKS_PER_NODE
    else
-      echo "error OMPI_COMM_WORLD_LOCAL_SIZE not defined"
-      exit -1
+      echo "$0 error: OMPI_COMM_WORLD_LOCAL_SIZE not defined."
+      exit 102
    fi
-fi
-
-if [[ -z $OMPI_COMM_WORLD_LOCAL_RANK ]]; then
-   echo "Error: OMPI_COMM_WORLD_LOCAL_RANK not defined. This script only supports SLURM and/or OpenMPI."
-   exit -1
 fi
 
 
 # Detect hardware
 # Number of GPUs on the node
 if [[ -z $LS_NGPUS ]]; then
-   LS_NGPUS=$(nvidia-smi --query-gpu=count --format=csv -i 0 | head -2 | tail -1) || (echo "Could not obtain number of GPUs"; exit -1)
+   LS_NGPUS=$(nvidia-smi --query-gpu=count --format=csv -i 0 | head -2 | tail -1) || (echo "$0 Error: could not obtain number of GPUs"; exit 103)
 fi
 # Number of cores and sockets (NUMA nodes are used as "sockets" as they are more reliable)
 nsockets=$(lscpu | grep Sock | awk '{print $2}')
@@ -158,37 +158,40 @@ fi
 # Detect if multiple MPI ranks are bound to the same GPU and check that it is consistent with MPI_SIZE.
 if [[ -z $MPI_PER_GPU ]]; then
    if [[ $nGPUs -lt $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
-      if [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
+      if [[ $OMPI_COMM_WORLD_RANK == 0 ]] || [[ $LS_DEBUG == 1 ]]; then
          echo "Error: there are $OMPI_COMM_WORLD_LOCAL_SIZE MPI ranks per node, but you seem to have only $nGPUs GPUs."
          echo "To prevent mistakes, if you intended to use more than 1 MPI rank per GPU, this script requires you to set the env variable MPI_PER_GPU."
          echo "Try to rerun with: export MPI_PER_GPU=$(((OMPI_COMM_WORLD_LOCAL_SIZE+nGPUs-1)/nGPUs))"
       else
          sleep 2
       fi
-      exit -1
+      [[ $OMPI_COMM_WORLD_RANK == 1 ]] && echo "$0 error"
+      exit 104
    fi
    MPI_PER_GPU=1
 else
    if [[ $((nGPUs*MPI_PER_GPU)) -lt $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
-      if [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
+      if [[ $OMPI_COMM_WORLD_RANK == 0 ]] || [[ $LS_DEBUG == 1 ]]; then
          echo "Error: unsatisfiable value for MPI_PER_GPU. $OMPI_COMM_WORLD_LOCAL_SIZE ranks per node spawned, but only $nGPUs GPUs x $MPI_PER_GPU ranks requested."
          echo "Try setting MPI_PER_GPU=$(((OMPI_COMM_WORLD_LOCAL_SIZE+nGPUs-1)/nGPUs))"
       else
          sleep 2
       fi
-      exit -1
+      [[ $OMPI_COMM_WORLD_RANK == 1 ]] && echo "$0 error"
+      exit 105
    fi
 fi
 
 # LS_PCI is an experimental flag to skip half the GPUs. Default LS_PCI=1 uses all GPUs. LS_PCI=2 will use 0,2,4,6
 if [[ -n $LS_PCI ]]; then
    if [[ $((nGPUs*MPI_PER_GPU)) -lt $((OMPI_COMM_WORLD_LOCAL_SIZE*LS_PCI)) ]]; then
-      if [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
+      if [[ $OMPI_COMM_WORLD_RANK == 0 ]] || [[ $LS_DEBUG == 1 ]]; then
          echo "Error: unsatisfiable value for LS_PCI. $OMPI_COMM_WORLD_LOCAL_SIZE ranks per node spawned, but only $((nGPUs/LS_PCI)) GPUs x $MPI_PER_GPU ranks requested."
       else
          sleep 2
       fi
-      exit -1
+      [[ $OMPI_COMM_WORLD_RANK == 1 ]] && echo "$0 error"
+      exit 106
    fi
    ## skip half of the GPUs
    for igpu in $(seq 0 $((nGPUs/LS_PCI-1))); do
@@ -200,7 +203,7 @@ if [[ -n $LS_PCI ]]; then
    nGPUs=$((nGPUs/LS_PCI))
    if [[ $nGPUs != ${#GPUS[@]} ]]; then
       echo "Internal $0 script error. Please report this bug."
-      exit -1
+      exit 107
    fi
    if [[ $LS_DEBUG == 1 ]] && [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
       echo "Debug LS_PCI GPUs: ${GPUS[*]} CPUS: ${CPUS[*]}"
@@ -260,7 +263,7 @@ fi
 ncores_per_mpi_avail=$((ncores_per_socket/nmpi_per_socket))
 
 if [[ $ncores_per_mpi -gt $ncores_per_mpi_avail ]]; then
-   if [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
+   if [[ $OMPI_COMM_WORLD_RANK == 0 ]] || [[ $LS_DEBUG == 1 ]]; then
       echo "Error: oversubscription detected. $ncores_per_mpi cores per rank requested through $requested_env_variable, but only $ncores_per_mpi_avail available."
       if ! [[ $LS_HYPERTHREAD == true ]]; then
          echo "If you intended to use hyperthreading, please export LS_HYPERTHREAD=true. Otherwise, set $requested_env_variable=$ncores_per_mpi_avail"
@@ -268,7 +271,7 @@ if [[ $ncores_per_mpi -gt $ncores_per_mpi_avail ]]; then
    else
       sleep 2
    fi
-   exit -1;
+   exit 108;
 fi
 
 if [[ $LS_DEBUG == 1 ]] && [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then

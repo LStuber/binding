@@ -135,7 +135,7 @@ else
          NICS[$igpu]=${ibdevs[$((igpu*num_ibdevs/LS_NGPUS/(num_ibdevs/NB_NICS_PER_NODE)*(num_ibdevs/NB_NICS_PER_NODE)))]}
       fi
    done
-   
+
    if echo "$lscpu" | grep -q "AMD EPYC 77" && ! [[ "$DISABLE_AMD_OPTI" == true ]]; then
       unset CPUS
       CPUS=(3 2 1 0 7 6 5 4)
@@ -267,7 +267,11 @@ else
    requested_env_variable="NCORES_PER_MPI"
    nthreads_per_mpi=$NCORES_PER_MPI
 fi
-nthreads_avail_per_mpi=$((nthreads_avail_per_socket/nmpi_per_socket))
+if [[ $nsockets_per_mpi -gt 1 ]]; then
+   nthreads_avail_per_mpi=$nthreads_avail_per_socket*$nsockets_per_mpi
+else
+   nthreads_avail_per_mpi=$((nthreads_avail_per_socket/nmpi_per_socket))
+fi
 if [[ $nthreads_avail_per_mpi -le 0 ]]; then
    if [[ $OMPI_COMM_WORLD_SIZE -lt $nmpi_per_socket ]]; then
       if [[ $OMPI_COMM_WORLD_RANK == 0 ]] || [[ $LS_DEBUG == 1 ]]; then
@@ -307,45 +311,60 @@ if [[ $LS_DEBUG == 1 ]] && [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
    echo "Debug nthreads_avail_per_socket=$nthreads_avail_per_socket nthreads_per_mpi=$nthreads_per_mpi nthreads_avail_per_mpi=$nthreads_avail_per_mpi nsockets_per_mpi=$nsockets_per_mpi  nmpi_per_socket=$nmpi_per_socket"
 fi
 
+nthreads_avail_per_socket_per_mpi=$(((nthreads_avail_per_mpi+nsockets_per_mpi-1)/nsockets_per_mpi))
+nthreads_per_socket_per_mpi=$(((nthreads_per_mpi+nsockets_per_mpi-1)/nsockets_per_mpi))
+n=$nthreads_per_mpi
 #finally do the socket/core binding
+cores=
 for my_id in $(seq $my_cpu_id $((my_cpu_id+nsockets_per_mpi-1)) ); do
    isocket=${CPUS[$my_id]}
    #establish list of cores
    intrasocket_rank=$((OMPI_COMM_WORLD_LOCAL_RANK % nmpi_per_socket))
    hyperthread_start=$((ncores_avail_per_socket*nsockets))
-   ncores_per_mpi=$((nthreads_per_mpi/hyperthread_cores))
+   ncores_per_mpi=$((nthreads_per_socket_per_mpi/hyperthread_cores))
    if [[ $ncores_per_mpi == 0 ]]; then
       ncores_per_mpi=1
    fi
-   cores=
    if [[ $CORE_ORDER == sequential ]]; then
-      first=$((isocket*ncores_avail_per_socket + intrasocket_rank*nthreads_per_mpi))
+      first=$((isocket*ncores_avail_per_socket + intrasocket_rank*nthreads_per_socket_per_mpi))
       ihyper=$(((isocket+1)*ncores_avail_per_socket))
-      for i in $(seq 0 $((nthreads_per_mpi-1))); do
+      for i in $(seq 0 $((nthreads_per_socket_per_mpi-1))); do
          if [[ $((first+i)) -lt $ihyper ]]; then
-            cores=$cores$((first+i)),
+            if [[ $n -gt 0 ]]; then
+               cores=$cores$((first+i)),
+               n=$((n-1))
+            fi
          else
-            #hyperthreading
-            cores=$cores$((hyperthread_start+i+first-ihyper+isocket*ncores_avail_per_socket)),
+            if [[ $n -gt 0 ]]; then
+               #hyperthreading
+               cores=$cores$((hyperthread_start+i+first-ihyper+isocket*ncores_avail_per_socket)),
+               n=$((n-1))
+            fi
          fi
       done
    else
       #Scaled over the range of cores available
-      first=$((isocket*ncores_avail_per_socket + intrasocket_rank*nthreads_avail_per_mpi))
+      first=$((isocket*ncores_avail_per_socket + intrasocket_rank*nthreads_avail_per_socket_per_mpi))
       ihyper=$(((isocket+1)*ncores_avail_per_socket))
-      for i in $(seq 0 $((nthreads_per_mpi-1))); do
-         idest=$((first+i*nthreads_avail_per_mpi/nthreads_per_mpi))
+      for i in $(seq 0 $((nthreads_per_socket_per_mpi-1))); do
+         idest=$((first+i*nthreads_avail_per_socket_per_mpi/nthreads_per_socket_per_mpi))
          if [[ $idest -lt $ihyper ]]; then
-            cores=$cores$idest,
+            if [[ $n -gt 0 ]]; then
+               cores=$cores$idest,
+               n=$((n-1))
+            fi
          else
-            #hyperthreading
-            cores=$cores$((hyperthread_start+idest-ihyper+isocket*ncores_avail_per_socket)),
+            if [[ $n -gt 0 ]]; then
+               #hyperthreading
+               cores=$cores$((hyperthread_start+idest-ihyper+isocket*ncores_avail_per_socket)),
+               n=$((n-1))
+            fi
          fi
       done
    fi
-   #remove last comma
-   cores=${cores::-1}
 done
+#remove last comma
+cores=${cores::-1}
 
 if [[ -n $OMP_NUM_THREADS ]] && [[ -z $OMP_PROC_BIND ]]; then
    export OMP_PROC_BIND=true

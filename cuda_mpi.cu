@@ -2,6 +2,20 @@
 #include "cuda.h"
 #include "cuda_runtime.h"
 #include <stdio.h>
+#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
+{
+   if (code != cudaSuccess)
+   {
+      fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+      if (abort) exit(code);
+   }
+}
+__global__ void touch_data(char*A,size_t size) {
+   for(size_t i=0;i<size;i++) {
+      A[i] = 42;
+   }
+}
 void bw_test(int min_msg_size, int max_msg_size, int global_rank, int global_size)
 {
     int window_size = 10;
@@ -15,8 +29,10 @@ void bw_test(int min_msg_size, int max_msg_size, int global_rank, int global_siz
     MPI_Status stat;
 //    if (global_rank == src || global_rank == dst)
 //    {
-        cudaMalloc(&gpu_src_buf, max_msg_size*global_size);
-        cudaMalloc(&gpu_dst_buf, max_msg_size*global_size);
+        gpuErrchk(cudaMallocManaged(&gpu_src_buf, max_msg_size*global_size));
+        gpuErrchk(cudaMalloc(&gpu_dst_buf, max_msg_size*global_size));
+    touch_data<<<1,1>>>(gpu_src_buf, max_msg_size*global_size);
+    gpuErrchk(cudaDeviceSynchronize());
 //    }
     for(int size = min_msg_size; size <= max_msg_size; size *= 2)
     {

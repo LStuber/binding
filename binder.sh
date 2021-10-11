@@ -137,6 +137,7 @@ else
    done
    
    if echo "$lscpu" | grep -q "AMD EPYC 77" && ! [[ "$DISABLE_AMD_OPTI" == true ]]; then
+      unset CPUS
       CPUS=(3 2 1 0 7 6 5 4)
    else
       if [[ $DISABLE_HALF_NUMAS != true ]]; then

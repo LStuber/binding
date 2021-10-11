@@ -29,7 +29,7 @@ void bw_test(int min_msg_size, int max_msg_size, int global_rank, int global_siz
     MPI_Status stat;
 //    if (global_rank == src || global_rank == dst)
 //    {
-        gpuErrchk(cudaMallocManaged(&gpu_src_buf, max_msg_size*global_size));
+        gpuErrchk(cudaMalloc(&gpu_src_buf, max_msg_size*global_size));
         gpuErrchk(cudaMalloc(&gpu_dst_buf, max_msg_size*global_size));
     touch_data<<<1,1>>>(gpu_src_buf, max_msg_size*global_size);
     gpuErrchk(cudaDeviceSynchronize());
@@ -62,7 +62,7 @@ void bw_test(int min_msg_size, int max_msg_size, int global_rank, int global_siz
 //        if (global_rank == src) {
             double tmp = size / 1e6 * iterations * window_size;
             double bw = tmp / t_total;
-            printf( "%d MB/s  %f\n", size, bw);
+            printf( "size=%d bw=%f MB/s\n", size, bw);
 //            fflush(stdout);
 //        }
     }

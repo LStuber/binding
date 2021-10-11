@@ -114,6 +114,9 @@ else
    CPUS=
    NICS=
    declare -A GPUS CPUS NICS
+   if echo "$lscpu" | grep -q "AMD EPYC 77" && ! [[ "$DISABLE_AMD_OPTI" == true ]]; then
+      CPUS=(3 2 1 0 7 6 5 4)
+   fi
    if ibstat_out="$(ibstat -l 2>/dev/null | sort -V)" ; then
       mapfile -t ibdevs <<< "${ibstat_out}"
    else

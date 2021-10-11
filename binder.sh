@@ -114,9 +114,6 @@ else
    CPUS=
    NICS=
    declare -A GPUS CPUS NICS
-   if echo "$lscpu" | grep -q "AMD EPYC 77" && ! [[ "$DISABLE_AMD_OPTI" == true ]]; then
-      CPUS=(3 2 1 0 7 6 5 4)
-   fi
    if ibstat_out="$(ibstat -l 2>/dev/null | sort -V)" ; then
       mapfile -t ibdevs <<< "${ibstat_out}"
    else
@@ -138,14 +135,19 @@ else
          NICS[$igpu]=${ibdevs[$((igpu*num_ibdevs/LS_NGPUS/(num_ibdevs/NB_NICS_PER_NODE)*(num_ibdevs/NB_NICS_PER_NODE)))]}
       fi
    done
-   if [[ $DISABLE_HALF_NUMAS != true ]]; then
-      for icpu in $(seq 0 $((nsockets-1))); do
-         CPUS[$icpu]=$((icpu))
-      done
+   
+   if echo "$lscpu" | grep -q "AMD EPYC 77" && ! [[ "$DISABLE_AMD_OPTI" == true ]]; then
+      CPUS=(3 2 1 0 7 6 5 4)
    else
-      for icpu in $(seq 0 2 $((nsockets-1))); do
-         CPUS[$((icpu/2))]=$((icpu))
-      done
+      if [[ $DISABLE_HALF_NUMAS != true ]]; then
+         for icpu in $(seq 0 $((nsockets-1))); do
+            CPUS[$icpu]=$((icpu))
+         done
+      else
+         for icpu in $(seq 0 2 $((nsockets-1))); do
+            CPUS[$((icpu/2))]=$((icpu))
+         done
+      fi
    fi
 fi
 

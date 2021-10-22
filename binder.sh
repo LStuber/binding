@@ -55,6 +55,10 @@ fi
 if [[ -z $LS_NGPUS ]]; then
    LS_NGPUS=$(nvidia-smi --query-gpu=count --format=csv -i 0 | head -2 | tail -1) || (echo "$0 Error: could not obtain number of GPUs"; exit 103)
 fi
+if [[ $LS_NGPUS -le 0 ]]; then
+   LS_NGPUS=$OMPI_COMM_WORLD_LOCAL_SIZE
+fi
+
 # Number of cores and sockets (NUMA nodes are used as "sockets" as they are more reliable)
 lscpu="$(lscpu)" #cache
 nsockets=$(echo "$lscpu" | grep Sock | awk '{print $2}')
@@ -136,9 +140,11 @@ else
       fi
    done
 
+   echo "PATH 1"
    if ! [[ "$DISABLE_AMD_OPTI" == true ]] && echo "$lscpu" | grep -q "AMD EPYC 77" && [[ $nsockets == 8 ]]; then
       unset CPUS
       CPUS=(3 2 1 0 7 6 5 4)
+      echo "PATH 2 $DISABLE_AMD_OPTI"
    else
       if [[ $DISABLE_HALF_NUMAS != true ]]; then
          for icpu in $(seq 0 $((nsockets-1))); do

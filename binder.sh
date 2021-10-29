@@ -140,11 +140,9 @@ else
       fi
    done
 
-   echo "PATH 1"
    if ! [[ "$DISABLE_AMD_OPTI" == true ]] && echo "$lscpu" | grep -q "AMD EPYC 77" && [[ $nsockets == 8 ]]; then
       unset CPUS
       CPUS=(3 2 1 0 7 6 5 4)
-      echo "PATH 2 $DISABLE_AMD_OPTI"
    else
       if [[ $DISABLE_HALF_NUMAS != true ]]; then
          for icpu in $(seq 0 $((nsockets-1))); do

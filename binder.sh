@@ -61,7 +61,7 @@ fi
 
 # Number of cores and sockets (NUMA nodes are used as "sockets" as they are more reliable)
 lscpu="$(lscpu)" #cache
-nsockets=$(echo "$lscpu" | grep Sock | awk '{print $2}')
+nphys_sockets=$(echo "$lscpu" | grep Sock | awk '{print $2}')
 ncores=$(echo "$lscpu" | grep "Core(s)" | awk '{print $4}')
 nnumas=$(echo "$lscpu" | grep "NUMA node"  | head -1 | awk '{print $3}')
 
@@ -84,7 +84,7 @@ fi
 
 # List the CPUs, NICs on the system, sorted by affinity with GPUs.
 isocket=
-if ! [[ "$DISABLE_AMD_OPTI" == true ]] && echo "$lscpu" | grep -q "AMD EPYC 7402" && [[ $nsockets == 8 ]] && [[ $LS_NGPUS == 4 ]]; then
+if ! [[ "$DISABLE_AMD_OPTI" == true ]] && echo "$lscpu" | grep -q "AMD EPYC 7402" && [[ $nphys_sockets == 8 ]] && [[ $LS_NGPUS == 4 ]]; then
    #Special optimization for JUWELS
    GPUS=(0 1 2 3)
    CPUS=(3 2 1 0 7 6 5 4)
@@ -98,7 +98,7 @@ if ! [[ "$DISABLE_AMD_OPTI" == true ]] && echo "$lscpu" | grep -q "AMD EPYC 7402
          NICS[$igpu]=${NICS[$((igpu/(8/NICS_PER_NODE)*(8/NICS_PER_NODE)))]}
       done
    fi
-elif ! [[ "$DISABLE_AMD_OPTI" == true ]] && echo "$lscpu" | grep -q "AMD EPYC 7742" && [[ $nsockets == 8 ]] ; then
+elif ! [[ "$DISABLE_AMD_OPTI" == true ]] && echo "$lscpu" | grep -q "AMD EPYC 7742" && [[ $nphys_sockets == 8 ]] ; then
    #Special optimization for DGX A100
    GPUS=(0 1 2 3 4 5 6 7)
    CPUS=(3 2 1 0 7 6 5 4)

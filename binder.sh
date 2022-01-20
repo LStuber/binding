@@ -65,7 +65,7 @@ nphys_sockets=$(echo "$lscpu" | grep Sock | awk '{print $2}')
 ncores=$(echo "$lscpu" | grep "Core(s)" | awk '{print $4}')
 nnumas=$(echo "$lscpu" | grep "NUMA node"  | head -1 | awk '{print $3}')
 
-ncores_avail_per_socket=$((ncores*nsockets/nnumas))
+ncores_avail_per_socket=$((ncores*nphys_sockets/nnumas))
 if [[ $LS_HYPERTHREAD == true ]] || [[ $LS_HYPERTHREAD == 1 ]]; then
    hyperthread_cores=2
    nthreads_avail_per_socket=$((ncores_avail_per_socket*hyperthread_cores))

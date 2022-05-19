@@ -128,7 +128,7 @@ else
       mapfile -t ibdevs <<< "${ibstat_out}"
    else
       if [[ -z $NB_NICS ]]; then
-         NB_NICS=$(ls /dev/infiniband/uverbs* | wc -l)
+         NB_NICS=$(ls /dev/infiniband/uverbs* 2>/dev/null | wc -l)
       fi
       ibdevs=
       declare -A ibdevs

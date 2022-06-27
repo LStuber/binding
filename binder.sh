@@ -146,9 +146,15 @@ else
       fi
    done
 
-   if ! [[ "$DISABLE_AMD_OPTI" == true ]] && echo "$lscpu" | grep -q "AMD EPYC 77" && [[ $nsockets == 8 ]]; then
+   if ! [[ "$DISABLE_AMD_OPTI" == true ]] && echo "$lscpu" | grep -q "AMD EPYC 77" && [[ $nsockets -gt 1 ]]; then
       unset CPUS
-      CPUS=(3 2 1 0 7 6 5 4)
+      if  [[ $nsockets -ge 8 ]]; then
+         CPUS=(3 2 1 0 7 6 5 4)
+      elif  [[ $nsockets -ge 4 ]]; then
+         CPUS=(3 2 1 0)
+      elif  [[ $nsockets -ge 2 ]]; then
+         CPUS=(1 0)
+      fi
    else
       if [[ $DISABLE_HALF_NUMAS != true ]]; then
          for icpu in $(seq 0 $((nsockets-1))); do

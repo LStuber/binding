@@ -267,7 +267,7 @@ nmpi_per_socket=$((nmpi_per_node/nCPUs))
 
 if [[ $nmpi_per_socket == 0 ]]; then
    #Weird case: multiple sockets are available per MPI rank
-   nsockets_per_mpi=$((nCPUs/nGPUs))
+   nsockets_per_mpi=$((nCPUs/nGPUs/MPI_PER_GPU))
    nmpi_per_socket=1
 fi
 

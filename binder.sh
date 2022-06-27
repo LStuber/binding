@@ -278,7 +278,7 @@ else
    nthreads_per_mpi=$NCORES_PER_MPI
 fi
 if [[ $nsockets_per_mpi -gt 1 ]]; then
-   nthreads_avail_per_mpi=$nthreads_avail_per_socket*$nsockets_per_mpi
+   nthreads_avail_per_mpi=$((nthreads_avail_per_socket*nsockets_per_mpi))
 else
    nthreads_avail_per_mpi=$((nthreads_avail_per_socket/nmpi_per_socket))
 fi

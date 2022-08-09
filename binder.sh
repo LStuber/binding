@@ -3,11 +3,11 @@
 # This is a binding script that properly restricts each MPI rank to an appropriate set of CPU cores, GPUs, and NIcs, in order to avoid contention.
 #   Usage: mpirun binder.sh <app>
 # The exact binding per-rank will be printed at runtime.
-# This script can also be used to bind more than 1 MPI rank per GPU, or restrict number of cores and GPUS and perform certain experiments, by setting env variables. Here are the most useful ones::
+# This script can also be used to bind more than 1 MPI rank per GPU, or restrict number of cores and GPUS and perform certain experiments, by setting env variables. Here are the most useful ones:
 #   MPI_PER_GPU=2 mpirun -n 8 binder.sh <app>      # bind 2 ranks per GPU
-#   LS_PCI=2 mpirun -n 4 binder.sh <app>           # skips half of the GPUs (eg. 0,2,4,6). Can be useful to understand the impact of different PCI-e topology.
+#   LS_PCI=2 mpirun -n 4 binder.sh <app>           # skip half of the GPUs (eg. 0,2,4,6). Can be useful to understand the impact of different PCI-e topology.
 #   OMP_NUM_THREADS=2 mpirun -n 1 binder.sh <app>  # will restrict to 2 cores per rank, using taskset
-# The script will auto-enable MPS if multiple ranks are bound on the same GPU.
+# The script will auto-enable MPS if multiple ranks are bound to the same GPU.
 # The script works by calculating the number of MPI ranks per node, the desired number of ranks per GPU (env variable MPI_PER_GPU), then
 # splits resources equally and assigns them to MPI ranks in round robin.
 # The script assumes a straightforward CPU - GPU topology (GPU 0 = CPU 0 etc.), and might fail on other topologies, such as EPYC CPUs (although some code is included for them).

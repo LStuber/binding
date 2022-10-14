@@ -418,10 +418,27 @@ if [[ $ENABLE_MPS == true ]] || [[ $ENABLE_MPS == 1 ]]; then
    fi
 fi
 
+USE_NUMACTL=${USE_NUMACTL:-true}
+USE_MEMORY_BINDING=${USE_MEMORY_BINDING:-true}
+ADD_MEM_BINDING=""
+MEMLIST="<off>"
+if $USE_NUMACTL && $USE_MEMORY_BINDING; then
+   MEMLIST="${CPUS[$my_cpu_id]}"
+   for my_id in $(seq $((my_cpu_id+1)) $((my_cpu_id+nsockets_per_mpi-1)) ); do
+      MEMLIST="$MEMLIST,${CPUS[$my_id]}"
+   done
+   ADD_MEM_BINDING="--membind=$MEMLIST"
+fi
 export HIP_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES
 
-echo "MPI Rank $OMPI_COMM_WORLD_RANK host $(hostname) GPU=$CUDA_VISIBLE_DEVICES cores=$cores UCX_NET_DEVICES=$UCX_NET_DEVICES"
-exec taskset -c $cores $@
+echo "MPI Rank $OMPI_COMM_WORLD_RANK host $(hostname) GPU=$CUDA_VISIBLE_DEVICES cores=$cores membind=$MEMLIST UCX_NET_DEVICES=$UCX_NET_DEVICES"
+
+if $USE_NUMACTL; then
+   exec numactl -a --physcpubind=$cores $ADD_MEM_BINDING $@
+else
+   exec taskset -c $cores $@
+fi
+
 
 if [[ $ENABLE_MPS == true ]] || [[ $ENABLE_MPS == 1 ]]; then
    if [[ $OMPI_COMM_WORLD_LOCAL_RANK == 0 ]];then

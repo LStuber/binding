@@ -55,11 +55,12 @@ if [[ -z $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
    fi
 fi
 
-
+has_set_ngpus=true
 # Detect hardware
 # Number of GPUs on the node
 if [[ -z $LS_NGPUS ]]; then
    LS_NGPUS=$(nvidia-smi --query-gpu=count --format=csv -i 0 | head -2 | tail -1) || (echo "$0 Error: could not obtain number of GPUs"; exit 103)
+   has_set_ngpus=false
 fi
 if [[ $LS_NGPUS -le 0 ]]; then
    LS_NGPUS=$OMPI_COMM_WORLD_LOCAL_SIZE
@@ -289,9 +290,9 @@ else
    nthreads_avail_per_mpi=$((nthreads_avail_per_socket/nmpi_per_socket))
 fi
 if [[ $nthreads_avail_per_mpi -le 0 ]]; then
-   if [[ $OMPI_COMM_WORLD_SIZE -lt $nmpi_per_socket ]]; then
+   if ! $has_set_ngpus && [[ $OMPI_COMM_WORLD_SIZE -lt $nmpi_per_socket ]]; then
       if [[ $OMPI_COMM_WORLD_RANK == 0 ]] || [[ $LS_DEBUG == 1 ]]; then
-         echo "$0 Error: the requested binding settings would cause overlap if all GPUs were used on the node. This is an error as it complicates the script logic. Please explicitly set the number of GPUs wou want to use with export LS_NGPUS=<number of GPUs>"
+         echo "$0 Error: the requested binding settings would cause overlap if all GPUs were used on the node. This is considered an error as it complicates the script logic. Please explicitly set the number of GPUs wou want to use with export LS_NGPUS=<number of GPUs>"
       else
          sleep 2
       fi

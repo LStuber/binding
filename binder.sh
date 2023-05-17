@@ -291,7 +291,7 @@ fi
 if [[ $nthreads_avail_per_mpi -le 0 ]]; then
    if [[ $OMPI_COMM_WORLD_SIZE -lt $nmpi_per_socket ]]; then
       if [[ $OMPI_COMM_WORLD_RANK == 0 ]] || [[ $LS_DEBUG == 1 ]]; then
-         echo "$0 Error: the requested binding settings would cause overlap if all GPUs were used on the node. This is an error as it complicates the script logic. Please explicitly set the number of GPUs wou want to use with export LS_NGPUs=<number of GPUs>"
+         echo "$0 Error: the requested binding settings would cause overlap if all GPUs were used on the node. This is an error as it complicates the script logic. Please explicitly set the number of GPUs wou want to use with export LS_NGPUS=<number of GPUs>"
       else
          sleep 2
       fi
@@ -300,7 +300,7 @@ if [[ $nthreads_avail_per_mpi -le 0 ]]; then
       if [[ $OMPI_COMM_WORLD_RANK == 0 ]] || [[ $LS_DEBUG == 1 ]]; then
          echo "$0 error. The number of MPI ranks per socket ($nmpi_per_socket) exceeds cores available ($nthreads_avail_per_socket). This is possibly the result of setting MPI_PER_GPU to a value that would cause overlap."
          if [[ -z $LS_PCI ]] || [[ $LS_PCI == 1 ]]; then
-            echo "If you plan to use only a subset of the GPUs, please explicitly set the number of GPUs wou want to use with export LS_NGPUs=<number of GPUs> or use the LS_PCI variable."
+            echo "If you plan to use only a subset of the GPUs, please explicitly set the number of GPUs wou want to use with export LS_NGPUS=<number of GPUs> or use the LS_PCI variable."
          fi
       else
          sleep 2

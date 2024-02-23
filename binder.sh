@@ -11,7 +11,7 @@
 # The script works by calculating the number of MPI ranks per node, the desired number of ranks per GPU (env variable MPI_PER_GPU), then
 # splits resources equally and assigns them to MPI ranks in round robin.
 # The script assumes a straightforward CPU - GPU topology (GPU 0 = CPU 0 etc.), and might fail on other topologies, such as EPYC CPUs (although some code is included for them).
-# Cores are bound using taskset, GPUs using CUDA_VISIBLE_DEVICES, and NICs using UCX_NET_DEVICES.
+# Cores are bound using numactl (optionally taskset to prevent memory binding), GPUs using CUDA_VISIBLE_DEVICES, and NICs using UCX_NET_DEVICES.
 # LICENSE : MIT - Copyright Louis Stuber/NVIDIA
 
 set -o pipefail
@@ -71,6 +71,14 @@ lscpu="$(lscpu)" #cache
 nphys_sockets=$(echo "$lscpu" | grep Sock | awk '{print $2}')
 ncores=$(echo "$lscpu" | grep "Core(s)" | awk '{print $4}')
 nnumas=$(echo "$lscpu" | grep "NUMA node"  | head -1 | awk '{print $3}')
+if [[ -n $(echo "$lscpu" | grep "NUMA node$nphys_sockets" | awk '{print $4}') ]]; then
+   #System with multiple NUMA nodes per socket (eg. AMD EPYC)
+   nsockets=$nnumas
+else
+   # 1 socket = 1 NUMA
+   nnumas=$nphys_sockets
+   nsockets=$nphys_sockets
+fi
 
 ncores_avail_per_socket=$((ncores*nphys_sockets/nnumas))
 if [[ $LS_HYPERTHREAD == true ]] || [[ $LS_HYPERTHREAD == 1 ]]; then
@@ -80,7 +88,6 @@ else
    hyperthread_cores=1
    nthreads_avail_per_socket=$ncores_avail_per_socket
 fi
-nsockets=$nnumas
 
 if [[ -n $NCPU_SOCKETS ]]; then
    nsockets=$NCPU_SOCKETS

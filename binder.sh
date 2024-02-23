@@ -422,7 +422,8 @@ if [[ $ENABLE_MPS == true ]] || [[ $ENABLE_MPS == 1 ]]; then
    if [[ $OMPI_COMM_WORLD_LOCAL_RANK == 0 ]];then
       env -u CUDA_VISIBLE_DEVICES nvidia-cuda-mps-control -d && echo "Starting MPS on $(hostname)"
    else
-      sleep 0.5
+      # wait until MPS is started
+      timeout 10 bash -c 'until pgrep nvidia-cuda-mps >/dev/null; do sleep 0.5; done' || echo "WARNING: Timed out waiting for the MPS daemon to start. Consider running without MPS."
    fi
 fi
 

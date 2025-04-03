@@ -5,7 +5,7 @@
 # The exact binding per-rank will be printed at runtime.
 # This script can also be used to bind more than 1 MPI rank per GPU, or restrict number of cores and GPUS and perform certain experiments, by setting env variables. Here are the most useful ones:
 #   MPI_PER_GPU=2 mpirun -n 8 binder.sh <app>      # bind 2 ranks per GPU
-#   LS_PCI=2 mpirun -n 4 binder.sh <app>           # skip half of the GPUs (eg. 0,2,4,6). Can be useful to understand the impact of different PCI-e topology.
+#   LS_SKIP=2 mpirun -n 4 binder.sh <app>          # skip half of the GPUs (eg. 0,2,4,6). Can be useful to understand the impact of different PCI-e topologies, or assign more cores per GPU.
 #   OMP_NUM_THREADS=2 mpirun -n 1 binder.sh <app>  # will restrict to 2 cores per rank, using taskset
 # The script will auto-enable MPS if multiple ranks are bound to the same GPU.
 # The script works by calculating the number of MPI ranks per node, the desired number of ranks per GPU (env variable MPI_PER_GPU), then
@@ -42,7 +42,7 @@ if [[ -z $OMPI_COMM_WORLD_LOCAL_RANK ]]; then
 fi
 
 if [[ -z $OMPI_COMM_WORLD_LOCAL_RANK ]]; then
-   echo "$0 Error: OMPI_COMM_WORLD_LOCAL_RANK not defined. This script only supports SLURM and/or OpenMPI."
+   echo "$0 Error: OMPI_COMM_WORLD_LOCAL_RANK not defined. This script only supports SLURM and/or OpenMPI." >&2
    exit 101
 fi
 
@@ -50,7 +50,7 @@ if [[ -z $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
    if [[ -n $LSUB_NTASKS_PER_NODE ]]; then
       OMPI_COMM_WORLD_LOCAL_SIZE=$LSUB_NTASKS_PER_NODE
    else
-      echo "$0 error: OMPI_COMM_WORLD_LOCAL_SIZE not defined."
+      echo "$0 error: OMPI_COMM_WORLD_LOCAL_SIZE not defined." >&2
       exit 102
    fi
 fi
@@ -59,7 +59,7 @@ has_set_ngpus=true
 # Detect hardware
 # Number of GPUs on the node
 if [[ -z $LS_NGPUS ]]; then
-   LS_NGPUS=$(nvidia-smi --query-gpu=count --format=csv -i 0 | head -2 | tail -1) || (echo "$0 Error: could not obtain number of GPUs"; exit 103)
+   LS_NGPUS=$(nvidia-smi --query-gpu=count --format=csv -i 0 | head -2 | tail -1) || (echo "$0 Error: could not obtain number of GPUs" >&2; exit 103)
    has_set_ngpus=false
 fi
 if [[ $LS_NGPUS -le 0 ]]; then
@@ -68,7 +68,11 @@ fi
 
 # Number of cores and sockets (NUMA nodes are used as "sockets" as they are more reliable)
 lscpu="$(lscpu)" #cache
-nphys_sockets=$(echo "$lscpu" | grep Sock | awk '{print $2}')
+nphys_sockets=${nphys_sockets:-$(echo "$lscpu" | grep Sock | awk '{print $2}')}
+if ! [[ "$nphys_sockets" =~ ^[0-9]+$ ]]; then
+   echo "$0 error: couldn't detect number of sockets (got '$nphys_sockets'). Please export nphys_sockets=<nsockets>" >&2
+   exit 118
+fi
 ncores=$(echo "$lscpu" | grep "Core(s)" | awk '{print $4}')
 nnumas=$(echo "$lscpu" | grep "NUMA node"  | head -1 | awk '{print $3}')
 if [[ -n $(echo "$lscpu" | grep "NUMA node$nphys_sockets" | awk '{print $4}') ]]; then
@@ -197,38 +201,42 @@ fi
 if [[ -z $MPI_PER_GPU ]]; then
    if [[ $nGPUs -lt $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
       if [[ $OMPI_COMM_WORLD_RANK == 0 ]] || [[ $LS_DEBUG == 1 ]]; then
-         echo "Error: there are $OMPI_COMM_WORLD_LOCAL_SIZE MPI ranks per node, but you seem to have only $nGPUs GPUs."
-         echo "To prevent mistakes, if you intended to use more than 1 MPI rank per GPU, this script requires you to set the env variable MPI_PER_GPU."
-         echo "Try to rerun with: export MPI_PER_GPU=$(((OMPI_COMM_WORLD_LOCAL_SIZE+nGPUs-1)/nGPUs))"
+         echo "Error: there are $OMPI_COMM_WORLD_LOCAL_SIZE MPI ranks per node, but you seem to have only $nGPUs GPUs." >&2
+         echo "To prevent mistakes, if you intended to use more than 1 MPI rank per GPU, this script requires you to set the env variable MPI_PER_GPU." >&2
+         echo "Try to rerun with: export MPI_PER_GPU=$(((OMPI_COMM_WORLD_LOCAL_SIZE+nGPUs-1)/nGPUs))" >&2
       else
          sleep 2
       fi
-      [[ $OMPI_COMM_WORLD_RANK == 1 ]] && echo "$0 error"
+      [[ $OMPI_COMM_WORLD_RANK == 1 ]] && echo "$0 error" >&2
       exit 104
    fi
    MPI_PER_GPU=1
 else
    if [[ $((nGPUs*MPI_PER_GPU)) -lt $OMPI_COMM_WORLD_LOCAL_SIZE ]]; then
       if [[ $OMPI_COMM_WORLD_RANK == 0 ]] || [[ $LS_DEBUG == 1 ]]; then
-         echo "Error: unsatisfiable value for MPI_PER_GPU. $OMPI_COMM_WORLD_LOCAL_SIZE ranks per node spawned, but only $nGPUs GPUs x $MPI_PER_GPU ranks requested."
-         echo "Try setting MPI_PER_GPU=$(((OMPI_COMM_WORLD_LOCAL_SIZE+nGPUs-1)/nGPUs))"
+         echo "Error: unsatisfiable value for MPI_PER_GPU. $OMPI_COMM_WORLD_LOCAL_SIZE ranks per node spawned, but only $nGPUs GPUs x $MPI_PER_GPU ranks requested." >&2
+         echo "Try setting MPI_PER_GPU=$(((OMPI_COMM_WORLD_LOCAL_SIZE+nGPUs-1)/nGPUs))" >&2
       else
          sleep 2
       fi
-      [[ $OMPI_COMM_WORLD_RANK == 1 ]] && echo "$0 error"
+      [[ $OMPI_COMM_WORLD_RANK == 1 ]] && echo "$0 error" >&2
       exit 105
    fi
 fi
 
-# LS_PCI is an experimental flag to skip half the GPUs. Default LS_PCI=1 uses all GPUs. LS_PCI=2 will use 0,2,4,6
+if [[ -n "${LS_SKIP}" ]]; then
+   export LS_PCI="${LS_SKIP}"
+fi
+
+# LS_PCI / LS_SKIP is an experimental flag to skip half the GPUs. Default LS_PCI=1 uses all GPUs. LS_PCI=2 will use 0,2,4,6
 if [[ -n $LS_PCI ]]; then
    if [[ $((nGPUs*MPI_PER_GPU)) -lt $((OMPI_COMM_WORLD_LOCAL_SIZE*LS_PCI)) ]]; then
       if [[ $OMPI_COMM_WORLD_RANK == 0 ]] || [[ $LS_DEBUG == 1 ]]; then
-         echo "Error: unsatisfiable value for LS_PCI. $OMPI_COMM_WORLD_LOCAL_SIZE ranks per node spawned, but only $((nGPUs/LS_PCI)) GPUs x $MPI_PER_GPU ranks requested."
+         echo "Error: unsatisfiable value for LS_PCI. $OMPI_COMM_WORLD_LOCAL_SIZE ranks per node spawned, but only $((nGPUs/LS_PCI)) GPUs x $MPI_PER_GPU ranks requested." >&2
       else
          sleep 2
       fi
-      [[ $OMPI_COMM_WORLD_RANK == 1 ]] && echo "$0 error"
+      [[ $OMPI_COMM_WORLD_RANK == 1 ]] && echo "$0 error" >&2
       exit 106
    fi
    ## skip half of the GPUs
@@ -240,11 +248,11 @@ if [[ -n $LS_PCI ]]; then
    done
    nGPUs=$((nGPUs/LS_PCI))
    if [[ $nGPUs != ${#GPUS[@]} ]]; then
-      echo "Internal $0 error. Please report this bug."
+      echo "Internal $0 error. Please report this bug." >&2
       exit 107
    fi
    if [[ $LS_DEBUG == 1 ]] && [[ $OMPI_COMM_WORLD_RANK == 0 ]]; then
-      echo "Debug LS_PCI GPUs: ${GPUS[*]} CPUS: ${CPUS[*]}"
+      echo "Debug LS_PCI GPUs: ${GPUS[*]} CPUS: ${CPUS[*]}" >&2
    fi
    LS_PCI_DEBUG_STRING=" (some GPUs are hidden due to LS_PCI)"
 else
@@ -299,16 +307,16 @@ fi
 if [[ $nthreads_avail_per_mpi -le 0 ]]; then
    if ! $has_set_ngpus && [[ $OMPI_COMM_WORLD_SIZE -lt $nmpi_per_socket ]]; then
       if [[ $OMPI_COMM_WORLD_RANK == 0 ]] || [[ $LS_DEBUG == 1 ]]; then
-         echo "$0 Error: the requested binding settings would cause overlap if all GPUs were used on the node. This is considered an error as it complicates the script logic. Please explicitly set the number of GPUs wou want to use with export LS_NGPUS=<number of GPUs>"
+         echo "$0 Error: the requested binding settings would cause overlap if all GPUs were used on the node. This is considered an error as it will likely result in wrong GPU/CPU affinity. If you want to only use a subset of the GPUs available, you can do that with 'export LS_NGPUS=N' (acts as if there were N GPUs on the system) or 'export LS_SKIP=N' (skips N devices, eg. LS_SKIP=2 to use GPUs 0,2,4,...)." >&2
       else
          sleep 2
       fi
       exit 114
    else
       if [[ $OMPI_COMM_WORLD_RANK == 0 ]] || [[ $LS_DEBUG == 1 ]]; then
-         echo "$0 error. The number of MPI ranks per socket ($nmpi_per_socket) exceeds cores available ($nthreads_avail_per_socket). This is possibly the result of setting MPI_PER_GPU to a value that would cause overlap."
+         echo "$0 error. The number of MPI ranks per socket ($nmpi_per_socket) exceeds cores available ($nthreads_avail_per_socket). This is possibly the result of setting MPI_PER_GPU to a value that would cause overlap." >&2
          if [[ -z $LS_PCI ]] || [[ $LS_PCI == 1 ]]; then
-            echo "If you plan to use only a subset of the GPUs, please explicitly set the number of GPUs wou want to use with export LS_NGPUS=<number of GPUs> or use the LS_PCI variable."
+            echo "If you want to only use a subset of the GPUs available, you can do that with 'export LS_NGPUS=N' (acts as if there were N GPUs on the system) or 'export LS_SKIP=N' (skips N devices, eg. LS_SKIP=2 to use GPUs 0,2,4,...)." >&2
          fi
       else
          sleep 2
@@ -319,11 +327,11 @@ fi
 
 if [[ $nthreads_per_mpi -gt $nthreads_avail_per_mpi ]]; then
    if [[ $OMPI_COMM_WORLD_RANK == 0 ]] || [[ $LS_DEBUG == 1 ]]; then
-      echo "$0 Error: oversubscription detected. $nthreads_per_mpi cores per rank requested through $requested_env_variable, but only $nthreads_avail_per_mpi available."
+      echo "$0 Error: oversubscription detected. $nthreads_per_mpi cores per rank requested through $requested_env_variable, but only $nthreads_avail_per_mpi available." >&2
       if [[ $LS_HYPERTHREAD == true ]] || [[ $LS_HYPERTHREAD == 1 ]]; then
-         echo "Please set $requested_env_variable=$nthreads_avail_per_mpi"
+         echo "Please set $requested_env_variable=$nthreads_avail_per_mpi" >&2
       else
-         echo "If you intended to use hyperthreading, please export LS_HYPERTHREAD=true. Otherwise, set $requested_env_variable=$nthreads_avail_per_mpi"
+         echo "If you intended to use hyperthreading, please export LS_HYPERTHREAD=true. Otherwise, set $requested_env_variable=$nthreads_avail_per_mpi" >&2
       fi
    else
       sleep 2
@@ -423,7 +431,7 @@ if [[ $ENABLE_MPS == true ]] || [[ $ENABLE_MPS == 1 ]]; then
       env -u CUDA_VISIBLE_DEVICES nvidia-cuda-mps-control -d && echo "Starting MPS on $(hostname)"
    else
       # wait until MPS is started
-      timeout 10 bash -c 'until pgrep nvidia-cuda-mps >/dev/null; do sleep 0.5; done' || echo "WARNING: $0 Timed out waiting for the MPS daemon to start. Consider running without MPS to reduce startup overhead (ENABLE_MPS=false)."
+      timeout 10 bash -c 'until pgrep nvidia-cuda-mps >/dev/null; do sleep 0.5; done' || echo "WARNING: $0 Timed out waiting for the MPS daemon to start (most likely no GPU on the node). Consider disabling MPS to reduce startup overhead (ENABLE_MPS=false)."
    fi
 fi
 
